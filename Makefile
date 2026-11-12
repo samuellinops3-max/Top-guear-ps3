@@ -35,4 +35,4 @@ $(TARGET).pkg: $(TARGET).elf ICON0.PNG $(SFOXML)
 	$(PS3DEV)/bin/pkg.py --contentid $(CONTENTID) pkg/ $@
 
 clean:
-	rm -rf pkg *.o *.elf *.self *.pkg
+	rm -rf pkg *.o *.elf *.self *.pkg 
