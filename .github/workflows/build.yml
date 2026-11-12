@@ -2,95 +2,28 @@ name: Compilar PKG
 
 on:
   push:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    container: ubuntu:20.04
+    container:
+      image: ps3dev/ps3dev:latest
     steps:
-      - name: Dependencias
+      - uses: actions/checkout@v4
+      - name: Instalar dependências
         run: |
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y curl make git python2 python3 libgmp10 libelf1 zlib1g libssl1.1 bzip2 xz-utils
-          ln -sf /usr/bin/python2 /usr/bin/python
-
-      - uses: actions/checkout@v4
-
-      - name: Baixar toolchain do PS3
-        run: |
-          curl -sL https://github.com/bucanero/ps3toolchain/releases/download/ubuntu-latest-fad3b5fb/ps3dev-ubuntu-latest-2020-08-31.tar.gz | tar xz -C /opt
-          ls /opt/ps3dev
-          echo "PS3DEV=/opt/ps3dev" >> $GITHUB_ENV
-          echo "PSL1GHT=/opt/ps3dev" >> $GITHUB_ENV
-          echo "/opt/ps3dev/bin" >> $GITHUB_PATH
-          echo "/opt/ps3dev/ppu/bin" >> $GITHUB_PATH
-
-      - name: Gerar icone - Carro Top Gear
-        run: |
-          python3 - <<'PY'
-          import zlib, struct, math
-          W, H = 320, 176
-          raw = b''
-          for y in range(H):
-              raw += b'\x00'
-              for x in range(W):
-                  # Ceu - por do sol Las Vegas
-                  if y < 70:
-                      px = (255, 140, 0)
-                      if y > 40:
-                          px = (255, 180, 40)
-                  elif y < 110:
-                      px = (60, 60, 60)  # estrada
-                  else:
-                      px = (40, 40, 40)
-                  # Sol
-                  if (x-260)**2 + (y-30)**2 < 22*22:
-                      px = (255, 210, 63)
-                  # Faixa da estrada
-                  if 100 < y < 110 and (x//20)%2==0:
-                      px = (255, 255, 255)
-                  # Predios
-                  for bx in [10, 50, 280]:
-                      if bx < x < bx+28 and 35 < y < 100:
-                          px = (30, 30, 30)
-                  # CARRO VERMELHO - visto de tras
-                  # Corpo
-                  if 90 < x < 230 and 85 < y < 125:
-                      px = (255, 0, 0)
-                  # Teto / vidro
-                  if 125 < x < 195 and 65 < y < 90:
-                      px = (255, 0, 0)
-                  if 135 < x < 185 and 70 < y < 86:
-                      px = (20, 20, 20)
-                  # Faixa branca central
-                  if 155 < x < 165 and 65 < y < 125:
-                      px = (255, 255, 255)
-                  # Rodas
-                  if (x-100)**2 + (y-125)**2 < 14*14:
-                      px = (0, 0, 0)
-                  if (x-220)**2 + (y-125)**2 < 14*14:
-                      px = (0, 0, 0)
-                  # Farol
-                  if 105 < x < 125 and 105 < y < 115:
-                      px = (255, 255, 0)
-                  if 195 < x < 215 and 105 < y < 115:
-                      px = (255, 255, 0)
-                  # Spoiler
-                  if 85 < x < 235 and 78 < y < 84:
-                      px = (150, 0, 0)
-                  raw += bytes(px)
-          def chunk(t, d):
-              c = struct.pack('>I', len(d)) + t + d
-              return c + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
-          png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', W, H, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
-          open('ICON0.PNG', 'wb').write(png)
-          PY
-
+          apt-get install -y python3 make git
       - name: Compilar
-        run: make
-
-      - uses: actions/upload-artifact@v4
+        run: |
+          export PS3DEV=/usr/local/ps3dev
+          export PSL1GHT=$PS3DEV/psl1ght
+          export PATH=$PATH:$PS3DEV/bin:$PSL1GHT/bin
+          make
+      - name: Enviar PKG
+        uses: actions/upload-artifact@v4
         with:
-          name: topgear-pkg
-          path: topgear.pkg
+          name: motoloop-pkg
+          path: "*.pkg"
