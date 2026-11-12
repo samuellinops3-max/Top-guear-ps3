@@ -5,9 +5,9 @@ include $(PSL1GHT)/ppu_rules
 
 .DEFAULT_GOAL := all
 
-TARGET    := topgear
-TITLE     := Top Gear
-APPID     := TOPG00001
+TARGET    := motoloop
+TITLE     := Moto Loop
+APPID     := MOTL00001
 CONTENTID := UP0001-$(APPID)_00-0000000000000000
 SFOXML    := sfo.xml
 PORTLIBS  := $(PS3DEV)/portlibs/ppu
