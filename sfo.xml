@@ -9,7 +9,7 @@
   <value name="PS3_SYSTEM_VER" type="string">00.0000</value>
   <value name="RESOLUTION" type="integer">63</value>
   <value name="SOUND_FORMAT" type="integer">1</value>
-  <value name="TITLE" type="string">Top Gear</value>
-  <value name="TITLE_ID" type="string">TOPG00001</value>
+  <value name="TITLE" type="string">Moto Loop</value>
+  <value name="TITLE_ID" type="string">MOTL00001</value>
   <value name="VERSION" type="string">01.00</value>
 </sfo>
