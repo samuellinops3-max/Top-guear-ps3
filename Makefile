@@ -15,19 +15,18 @@ PORTLIBS  := $(PS3DEV)/portlibs/ppu
 MACHDEP := -mhard-float -fmodulo-sched -ffunction-sections -fdata-sections
 CFLAGS  := -O2 -Wall -mcpu=cell $(MACHDEP) -I$(PSL1GHT)/ppu/include -I$(PORTLIBS)/include
 LDFLAGS := $(MACHDEP) -L$(PSL1GHT)/ppu/lib -L$(PORTLIBS)/lib
-LIBS    := -ltiny3d -lpad -lrsx -lgcm_sys -lio -lsysutil -lrt -llv2 -lm
+LIBS    := -lrsx -lgcm_sys -lio -lsysutil -lrt -llv2 -lm
 
 all: $(TARGET).pkg
 
-# ACHA O MAIN ONDE ELE ESTIVER!
-SRC := $(firstword $(wildcard main.cpp main.c source/main.cpp source/main.c))
+SRC := $(firstword $(wildcard main.c main.cpp source/main.c source/main.cpp))
 OBJ := main.o
 
 $(OBJ): $(SRC)
-	$(CXX) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(TARGET).elf: $(OBJ)
-	$(CXX) $(LDFLAGS) -o $@ $< $(LIBS)
+	$(CC) $(LDFLAGS) -o $@ $< $(LIBS)
 
 $(TARGET).pkg: $(TARGET).elf ICON0.PNG $(SFOXML)
 	rm -rf pkg
