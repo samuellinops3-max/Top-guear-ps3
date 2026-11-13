@@ -1,4 +1,4 @@
-name: Build PS3 PKG
+name: Build PS3 - ASTRONOMIA QUIZ PS3
 
 on:
   push:
@@ -8,17 +8,19 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: ps3dev/psl1ght:latest
-
+      image: psl1ght/psl1ght:latest
     steps:
-      - name: Baixar codigo
-        uses: actions/checkout@v4
-
-      - name: Compilar PKG
-        run: make pkg
-
-      - name: Salvar Artefato PKG
+      - uses: actions/checkout@v4
+      - name: Compilar
+        run: |
+          make clean || true
+          make
+          ls -lh
+          mkdir -p pkg
+          cp *.elf pkg/ || true
+          cp *.self pkg/ || true
+      - name: Salvar PKG
         uses: actions/upload-artifact@v4
         with:
-          name: slither-ps3-pkg
-          path: "*.pkg"
+          name: ASTRONOMIA_QUIZ_PS3
+          path: pkg/
