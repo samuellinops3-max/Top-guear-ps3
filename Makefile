@@ -1,28 +1,38 @@
-# ASTRONOMIA QUIZ PS3 - JA PRONTO
-TARGET = ASTRONOMIA_QUIZ_PS3
-
-PSL1GHT ?= /usr/local/psl1ght
+ifeq ($(strip $(PSL1GHT)),)
+$(error "Defina a variavel PSL1GHT")
+endif
 include $(PSL1GHT)/ppu_rules
 
-INCLUDE = -I$(PSL1GHT)/ppu/include -I$(PSL1GHT)/portlibs/ppu/include
-LIBDIRS = -L$(PSL1GHT)/ppu/lib -L$(PSL1GHT)/portlibs/ppu/lib
-LIBS = -lrsx -lgcm_sys -lio -lsysutil -lm
+.DEFAULT_GOAL := all
 
-CFILES = main.c
-OFILES = $(CFILES:.c=.o)
+TARGET    := astronomia
+TITLE     := Astronomia Quiz PS3
+APPID     := ASTR00001
+CONTENTID := UP0001-$(APPID)_00-0000000000000000
+SFOXML    := sfo.xml
+PORTLIBS  := $(PS3DEV)/portlibs/ppu
 
-all: $(TARGET).elf $(TARGET).self
+MACHDEP := -mhard-float -fmodulo-sched -ffunction-sections -fdata-sections
+CFLAGS  := -O2 -Wall -mcpu=cell $(MACHDEP) -I$(PSL1GHT)/ppu/include -I$(PORTLIBS)/include
+LDFLAGS := $(MACHDEP) -L$(PSL1GHT)/ppu/lib -L$(PORTLIBS)/lib
+LIBS    := -lrsx -lgcm_sys -lio -lsysutil -lrt -llv2 -lm
 
-$(TARGET).elf: $(OFILES)
-	$(CC) $(CFLAGS) $(OFILES) -o $@ $(LIBDIRS) $(LIBS)
+all: $(TARGET).pkg
 
-%.o: %.c
-	$(CC) $(CFLAGS) $(INCLUDE) -c $< -o $@
+main.o: main.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
-%.self: %.elf
-	$(SPRX) $< $@
+$(TARGET).elf: main.o
+	$(CC) $(LDFLAGS) -o $@ $< $(LIBS)
+
+$(TARGET).pkg: $(TARGET).elf ICON0.PNG $(SFOXML)
+	rm -rf pkg
+	mkdir -p pkg/USRDIR
+	cp ICON0.PNG pkg/ICON0.PNG
+	$(PS3DEV)/bin/sprxlinker $(TARGET).elf
+	$(PS3DEV)/bin/make_self_npdrm $(TARGET).elf pkg/USRDIR/EBOOT.BIN $(CONTENTID)
+	$(PS3DEV)/bin/sfo.py --title "$(TITLE)" --appid "$(APPID)" -f $(SFOXML) pkg/PARAM.SFO
+	$(PS3DEV)/bin/pkg.py --contentid $(CONTENTID) pkg/ $@
 
 clean:
-	rm -f $(OFILES) $(TARGET).elf $(TARGET).self
-
-.PHONY: all clean
+	rm -rf pkg *.o *.elf *.self *.pkg
