@@ -19,10 +19,14 @@ LIBS    := -ltiny3d -lpad -lrsx -lgcm_sys -lio -lsysutil -lrt -llv2 -lm
 
 all: $(TARGET).pkg
 
-main.o: main.cpp
+# ACHA O MAIN ONDE ELE ESTIVER!
+SRC := $(firstword $(wildcard main.cpp main.c source/main.cpp source/main.c))
+OBJ := main.o
+
+$(OBJ): $(SRC)
 	$(CXX) $(CFLAGS) -c $< -o $@
 
-$(TARGET).elf: main.o
+$(TARGET).elf: $(OBJ)
 	$(CXX) $(LDFLAGS) -o $@ $< $(LIBS)
 
 $(TARGET).pkg: $(TARGET).elf ICON0.PNG $(SFOXML)
