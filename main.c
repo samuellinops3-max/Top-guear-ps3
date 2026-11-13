@@ -1,4 +1,4 @@
-// SLITHER.IO PS3 - Base VERDE RSX + Powers + Skins + Kills
+// SLITHER.IO PS3 - COMPLETO - Base VERDE RSX + Powers + Skins
 // Controles: analogico = direcao, X = turbo, BOLA = escudo, TRIANGULO = ima
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,7 +14,6 @@
 
 #define CB_SIZE   (0x100000)
 #define HOST_SIZE (32 * 1024 * 1024)
-
 #define WORLD  3200.0f
 #define MAXSEG 420
 #define NSN    10
@@ -39,7 +38,7 @@ typedef struct {
 
 typedef struct {
     float x, y;
-    int type, active; // 0=escudo 1=ima 2=bonus +50
+    int type, active;
 } Power;
 
 static const u32 palette[8] = {
@@ -47,19 +46,17 @@ static const u32 palette[8] = {
     0x00C77DFF, 0x00FF8FAB, 0x0000E5C0, 0x00FF9F43
 };
 
-// Skins - cada skin tem 2 cores que alternam
 static const u32 skins[8][2] = {
-    {0x00FF4D4D, 0x00FFD23F}, // 0 fogo
-    {0x00FFFFFF, 0x00111111}, // 1 zebra
-    {0x00FF0000, 0x00FF8800}, // 2 lava
-    {0x00FF0066, 0x00FFFFFF}, // 3 rosa
-    {0x0000FF00, 0x000088FF}, // 4 verde/azul
-    {0x00FF8800, 0x00000000}, // 5 abelha
-    {0x008800FF, 0x0000FFFF}, // 6 neon
-    {0x0000FF88, 0x00003311}, // 7 menta
+    {0x00FF4D4D, 0x00FFD23F},
+    {0x00FFFFFF, 0x00111111},
+    {0x00FF0000, 0x00FF8800},
+    {0x00FF0066, 0x00FFFFFF},
+    {0x0000FF00, 0x000088FF},
+    {0x00FF8800, 0x00000000},
+    {0x008800FF, 0x0000FFFF},
+    {0x0000FF88, 0x00003311},
 };
 
-/* ---------- video - IGUAL O VERDE ---------- */
 static gcmContextData *ctx;
 static u32 W, H;
 static u32 *fb[2];
@@ -78,18 +75,15 @@ static void init_screen(void)
 {
     void *host = memalign(1024 * 1024, HOST_SIZE);
     rsxInit(&ctx, CB_SIZE, HOST_SIZE, host);
-
     videoState st;
     videoGetState(VIDEO_PRIMARY, 0, &st);
     u32 resid = st.displayMode.resolution;
     if (videoGetResolutionAvailability(VIDEO_PRIMARY, VIDEO_RESOLUTION_720, VIDEO_ASPECT_AUTO, 0))
         resid = VIDEO_RESOLUTION_720;
-
     videoResolution res;
     videoGetResolution(resid, &res);
     W = res.width;
     H = res.height;
-
     videoConfiguration vc;
     memset(&vc, 0, sizeof(vc));
     vc.resolution = resid;
@@ -98,9 +92,7 @@ static void init_screen(void)
     vc.pitch = W * 4;
     videoConfigure(VIDEO_PRIMARY, &vc, NULL, 0);
     videoGetState(VIDEO_PRIMARY, 0, &st);
-
     gcmSetFlipMode(GCM_FLIP_VSYNC);
-
     for (int i = 0; i < 2; i++) {
         fb[i] = (u32 *)rsxMemalign(64, W * H * 4);
         gcmAddressToOffset(fb[i], &fboff[i]);
@@ -129,7 +121,6 @@ static void present(void)
     first_flip = 0;
 }
 
-/* ---------- desenho - IGUAL O VERDE ---------- */
 static void fill_rect(int x, int y, int w, int h, u32 c)
 {
     int x0 = x < 0 ? 0 : x, y0 = y < 0 ? 0 : y;
@@ -171,7 +162,6 @@ static void circle_outline(int cx, int cy, int r, u32 c)
     }
 }
 
-/* fonte 3x5 - COMPLETA pro novo jogo */
 typedef struct { char c; const char *p; } Glyph;
 static const Glyph glyphs[] = {
     {'0', "###" "#.#" "#.#" "#.#" "###"}, {'1', ".#." "##." ".#." ".#." "###"},
@@ -214,7 +204,6 @@ static void draw_text(const char *s, int x, int y, int sc, u32 c)
     }
 }
 
-/* ---------- jogo - MEU SLITHER + BASE VERDE ---------- */
 static Snake sn[NSN];
 static Pellet pel[NPEL];
 static Power powers[NPOW];
@@ -279,7 +268,6 @@ static void bot_think(int i)
     Snake *s = &sn[i];
     float hx = s->x[0], hy = s->y[0];
     s->tgt += (frand() - 0.5f) * 0.25f;
-
     if (s->tick % 6 == 0) {
         float best = 380.0f * 380.0f;
         int bi = -1;
@@ -290,10 +278,8 @@ static void bot_think(int i)
         }
         if (bi >= 0) s->tgt = atan2f(pel[bi].y - hy, pel[bi].x - hx);
     }
-
     if (hx < 250 || hx > WORLD - 250 || hy < 250 || hy > WORLD - 250)
         s->tgt = atan2f(WORLD / 2 - hy, WORLD / 2 - hx);
-
     float px = hx + cosf(s->ang) * 55, py = hy + sinf(s->ang) * 55;
     float rs = radius_of(s);
     for (int o = 0; o < NSN; o++) {
@@ -318,21 +304,18 @@ static void update_snake(int i)
     if (i == 0) {
         if (pad_mag > 0.3f) s->tgt = atan2f(pad_ay, pad_ax);
         s->boost = pad_boost;
-        // BOLA = escudo, TRIANGULO = ima - so quando aperta, nao segurando
         if (pad_circle && !pad_circle_prev && !shieldOn) { shieldOn = 1; shieldTime = 300; }
         if (pad_tri && !pad_tri_prev && !magnetOn) { magnetOn = 1; magnetTime = 400; }
     } else {
         bot_think(i);
         s->boost = (s->len > 30 && (s->tick / 90) % 5 == 0) ? 1 : 0;
     }
-
     float d = s->tgt - s->ang;
     while (d > PI) d -= 2 * PI;
     while (d < -PI) d += 2 * PI;
     if (d > 0.075f) d = 0.075f;
     if (d < -0.075f) d = -0.075f;
     s->ang += d;
-
     float sp = 3.0f;
     if (s->boost && s->len > 12) {
         sp = 5.4f;
@@ -352,17 +335,13 @@ static void update_snake(int i)
             s->y[j] += dy * f;
         }
     }
-
-    // Parede - com escudo rebate, sem escudo morre
     if (s->x[0] < 0 || s->x[0] > WORLD || s->y[0] < 0 || s->y[0] > WORLD) {
         if (i == 0 && shieldOn) {
             if (s->x[0] < 0) s->x[0] = 0; if (s->x[0] > WORLD) s->x[0] = WORLD;
             if (s->y[0] < 0) s->y[0] = 0; if (s->y[0] > WORLD) s->y[0] = WORLD;
         } else { kill_snake(i); return; }
     }
-
     float rs = radius_of(s), er = rs + 12;
-    // IMA - puxa comida de longe
     if (i == 0 && magnetOn) er = 150;
     for (int k = 0; k < NPEL; k++) {
         if (!pel[k].active) continue;
@@ -387,8 +366,6 @@ static void update_snake(int i)
         s->grow -= 2;
     }
     if (s->len >= MAXSEG) s->grow = 0;
-
-    // Powers - so player pega
     if (i == 0) {
         for (int p = 0; p < NPOW; p++) {
             if (!powers[p].active) continue;
@@ -404,8 +381,6 @@ static void update_snake(int i)
         if (shieldTime > 0) shieldTime--; else shieldOn = 0;
         if (magnetTime > 0) magnetTime--; else magnetOn = 0;
     }
-
-    // Colisao com corpo - com escudo, gasta escudo e nao morre
     for (int o = 0; o < NSN; o++) {
         if (o == i || !sn[o].alive) continue;
         float lim = (rs + radius_of(&sn[o])) * 0.75f;
@@ -460,12 +435,10 @@ static void update_game(void)
     for (int i = 0; i < NSN; i++) update_snake(i);
     pad_circle_prev = pad_circle;
     pad_tri_prev = pad_tri;
-
     int count = 0;
     for (int k = 0; k < NPEL; k++) count += pel[k].active;
     for (int n = 0; n < 2 && count < NPEL - 40; n++, count++)
         add_pellet(frand() * WORLD, frand() * WORLD, 1 + (rand() % 5 == 0));
-
     if (sn[0].alive) {
         camx = sn[0].x[0];
         camy = sn[0].y[0];
@@ -485,7 +458,6 @@ static void render(void)
     float hw = W / 2.0f, hh = H / 2.0f;
     u32 n = W * H;
     for (u32 i = 0; i < n; i++) back[i] = 0x000E1420;
-
     int sx0 = (int)((0 - camx) * sc + hw), sx1 = (int)((WORLD - camx) * sc + hw);
     int sy0 = (int)((0 - camy) * sc + hh), sy1 = (int)((WORLD - camy) * sc + hh);
     u32 red = 0x00380E12;
@@ -493,7 +465,6 @@ static void render(void)
     if (sx1 < (int)W) fill_rect(sx1, 0, W - sx1, H, red);
     if (sy0 > 0) fill_rect(0, 0, W, sy0, red);
     if (sy1 < (int)H) fill_rect(0, sy1, W, H - sy1, red);
-
     float gx0 = floorf((camx - hw / sc) / 100.0f) * 100.0f;
     float gy0 = floorf((camy - hh / sc) / 100.0f) * 100.0f;
     for (float gx = gx0; gx < camx + hw / sc; gx += 100.0f) {
@@ -503,15 +474,11 @@ static void render(void)
             fill_rect((int)((gx - camx) * sc + hw), (int)((gy - camy) * sc + hh), 4, 4, 0x00203047);
         }
     }
-
-    // Comida
     for (int k = 0; k < NPEL; k++) {
         if (!pel[k].active) continue;
         int px = (int)((pel[k].x - camx) * sc + hw), py = (int)((pel[k].y - camy) * sc + hh);
         circle(px, py, (int)((4 + pel[k].size * 2) * sc), pel[k].col);
     }
-
-    // Powers - maior e brilhando
     for (int p = 0; p < NPOW; p++) {
         if (!powers[p].active) continue;
         int px = (int)((powers[p].x - camx) * sc + hw), py = (int)((powers[p].y - camy) * sc + hh);
@@ -519,8 +486,6 @@ static void render(void)
         circle(px, py, (int)(14 * sc), c);
         circle(px, py, (int)(7 * sc), 0x00FFFFFF);
     }
-
-    // Cobras com SKINS
     for (int i = NSN - 1; i >= 0; i--) {
         Snake *s = &sn[i];
         if (!s->alive) continue;
@@ -537,26 +502,19 @@ static void render(void)
             circle(ex, ey, r * 35 / 100 + 1, 0x00FFFFFF);
             circle(ex + (int)(cosf(s->ang) * r * 0.15f), ey + (int)(sinf(s->ang) * r * 0.15f), r * 18 / 100 + 1, 0x00000000);
         }
-        // Escudo - circulo azul em volta do player
         if (i == 0 && shieldOn) circle_outline(hx, hy, r + 12, 0x0000AAFF);
-        // Ima - circulo rosa
         if (i == 0 && magnetOn) circle_outline(hx, hy, r + 22, 0x00FF00FF);
     }
-
-    /* HUD - MEU JOGO */
     char buf[64];
     int ui = (int)(4 * sc + 0.5f);
     if (ui < 3) ui = 3;
     draw_text("SCORE", 24, 20, ui, 0x00FFFFFF);
     sprintf(buf, "%d", sn[0].score);
     draw_text(buf, 24, 20 + 7 * ui, ui + 2, 0x00FFD23F);
-
     sprintf(buf, "KILLS %d", kills);
     draw_text(buf, 24, 20 + 16 * ui, ui, 0x00FF4D4D);
-
     sprintf(buf, "FOOD %d", foodsEaten);
     draw_text(buf, 24, 20 + 22 * ui, ui, 0x0066FF66);
-
     if (shieldOn) {
         sprintf(buf, "SHIELD %d", shieldTime / 60);
         draw_text(buf, 24, 20 + 28 * ui, ui, 0x0000AAFF);
@@ -565,9 +523,32 @@ static void render(void)
         sprintf(buf, "MAGNET %d", magnetTime / 60);
         draw_text(buf, 24, 20 + 34 * ui, ui, 0x00FF00FF);
     }
-
     draw_text("X TURBO  O SHIELD  TRI MAGNET", 24, (int)H - 8 * ui, ui, 0x00809BBF);
-
     if (!sn[0].alive) {
         int bw = text_width("GAME OVER", ui * 2) + 80, bh = 16 * ui + 40;
-        fill_rect((int)W /
+        fill_rect((int)W / 2 - bw / 2, (int)H / 2 - bh / 2, bw, bh, 0x00000000);
+        draw_text("GAME OVER", (int)W / 2 - text_width("GAME OVER", ui * 2) / 2, (int)H / 2 - bh / 2 + 24, ui * 2, 0x00FF4D4D);
+        sprintf(buf, "SCORE %d  KILLS %d", sn[0].score, kills);
+        draw_text(buf, (int)W / 2 - text_width(buf, ui) / 2, (int)H / 2 + ui * 2, ui, 0x00FFFFFF);
+        if (dead_t > 60)
+            draw_text("PRESS X", (int)W / 2 - text_width("PRESS X", ui) / 2, (int)H / 2 + ui * 3, ui, 0x00FFFFFF);
+    }
+}
+
+int main(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+    init_screen();
+    ioPadInit(7);
+    sysUtilRegisterCallback(0, sysutil_cb, NULL);
+    srand(20261109);
+    init_game();
+    while (running) {
+        sysUtilCheckCallback();
+        read_pad();
+        update_game();
+        render();
+        present();
+    }
+    return 0;
+}
