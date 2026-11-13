@@ -1,180 +1,290 @@
+// SLITHER.IO - PS3 - PSL1GHT / Tiny3D
+// Controles: L3 = Analógico | X = Boost | O = Escudo | Triangulo = Imã | START = Reiniciar
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <math.h>
-#include <unistd.h>
-#include <malloc.h>
-#include <ppu-types.h>
+#include <string.h>
+#include <ppu-lv2.h>
 #include <sysutil/sysutil.h>
-#include <sysutil/video.h>
-#include <rsx/rsx.h>
 #include <io/pad.h>
-#define CB_SIZE (0x100000)
-#define HOST_SIZE (32 * 1024 * 1024)
-#define PI 3.14159265f
-static gcmContextData *ctx;
-static u32 W, H;
-static u32 *fb[2];
-static u32 fboff[2];
-static u32 *back;
-static int cur = 0, first_flip = 1;
-static volatile int running = 1;
-static void sysutil_cb(u64 status, u64 param, void *usrdata){
-(void)param; (void)usrdata;
-if(status == SYSUTIL_EXIT_GAME) running = 0;
+#include <tiny3d.h>
+#include <libfont.h>
+
+#define MAX_FOODS 130
+#define MAX_BOTS 15
+#define WORLD 1500.0f
+#define MAX_BODY 120
+
+struct Body { float x, y; };
+struct Snake {
+    float x, y, angle;
+    int score;
+    int alive;
+    int skin;
+    int bodyLen;
+    Body body[MAX_BODY];
+    float tx, ty;
+    char name[16];
+};
+struct Food { float x, y; int color; };
+struct Power { float x, y; int type; }; // 0 shield, 1 magnet, 2 boost
+
+static Snake player;
+static Snake bots[MAX_BOTS];
+static Food foods[MAX_FOODS];
+static Power powers[8];
+static int foodsEaten = 0, kills = 0, dead = 0, deadReason = 0; // 0 cobra, 1 borda
+static int boostOn = 0, shieldOn = 0, magnetOn = 0;
+static int shieldTime = 0, magnetTime = 0;
+static float joyX = 1, joyY = 0;
+static padInfo padinfo;
+static padData paddata;
+
+// Cores skins - igual HTML
+static int skinColors[8][6] = {
+    {0xFF0000,0xFF8800,0xFFFF00,0x00FF00,0x0088FF,0xAA00FF}, // rainbow
+    {0xFFFFFF,0x111111,0xFFFFFF,0x111111,0xFFFFFF,0x111111}, // zebra
+    {0xFF0000,0xFF6600,0xFFCC00,0xFF0000,0xFF6600,0xFFCC00}, // fire
+    {0xFF0066,0xFFFFFF,0xFF0066,0xFFFFFF,0xFF0066,0xFFFFFF}, // candy
+    {0x00FF00,0xFFFF00,0x0088FF,0x00FF00,0xFFFF00,0x0088FF}, // brasil
+    {0xFF8800,0x000000,0x000000,0xFF8800,0x000000,0x000000}, // tiger
+    {0x220044,0x8800FF,0x00FFFF,0xFF00FF,0x220044,0x8800FF}, // galaxy
+    {0x00FF88,0x003311,0x00FF88,0x003311,0x00FF88,0x003311}, // neon
+};
+static char *botNames[15] = {"Noob","Pro","King","Turbo","Brabo","Ghost","Lenda","Dark","Fome","Snake","Ze","Loko","Fera","Top1","Mata"};
+
+float frand(float a, float b){ return a + (rand()/(float)RAND_MAX)*(b-a); }
+
+void initGame(){
+    srand(sysGetTime());
+    player.x=0; player.y=0; player.angle=0; player.score=10; player.alive=1; player.skin=0; player.bodyLen=20;
+    for(int i=0;i<20;i++){ player.body[i].x=-i*11; player.body[i].y=0; }
+    for(int i=0;i<MAX_FOODS;i++){ foods[i].x=frand(-1500,1500); foods[i].y=frand(-1500,1500); foods[i].color=rand()%8; }
+    for(int i=0;i<8;i++){ powers[i].x=frand(-1500,1500); powers[i].y=frand(-1500,1500); powers[i].type=i%3; }
+    for(int i=0;i<MAX_BOTS;i++){
+        Snake *b=&bots[i];
+        b->x=frand(-1300,1300); b->y=frand(-1300,1300); b->angle=frand(0,6.28);
+        b->score=12+rand()%35; b->alive=1; b->skin=i%8; b->bodyLen=22;
+        strcpy(b->name, botNames[i]);
+        for(int j=0;j<22;j++){ b->body[j].x=b->x-j*11; b->body[j].y=b->y; }
+        b->tx=b->x; b->ty=b->y;
+    }
+    foodsEaten=0; kills=0; dead=0; boostOn=0; shieldOn=0; magnetOn=0; shieldTime=0; magnetTime=0;
 }
-static void init_screen(void){
-void *host = memalign(1024*1024, HOST_SIZE);
-rsxInit(&ctx, CB_SIZE, HOST_SIZE, host);
-videoState st;
-videoGetState(VIDEO_PRIMARY, 0, &st);
-u32 resid = st.displayMode.resolution;
-if(videoGetResolutionAvailability(VIDEO_PRIMARY, VIDEO_RESOLUTION_720, VIDEO_ASPECT_AUTO, 0)) resid = VIDEO_RESOLUTION_720;
-videoResolution res;
-videoGetResolution(resid, &res);
-W = res.width; H = res.height;
-videoConfiguration vc;
-memset(&vc,0,sizeof(vc));
-vc.resolution = resid;
-vc.format = VIDEO_BUFFER_FORMAT_XRGB;
-vc.aspect = VIDEO_ASPECT_AUTO;
-vc.pitch = W*4;
-videoConfigure(VIDEO_PRIMARY, &vc, NULL, 0);
-videoGetState(VIDEO_PRIMARY, 0, &st);
-gcmSetFlipMode(GCM_FLIP_VSYNC);
-for(int i=0;i<2;i++){
-fb[i]=(u32*)rsxMemalign(64, W*H*4);
-gcmAddressToOffset(fb[i], &fboff[i]);
-gcmSetDisplayBuffer(i, fboff[i], W*4, W, H);
+
+void killSnake(Snake *s, int reason){
+    if(!s->alive) return;
+    s->alive=0;
+    // vira comida
+    for(int i=0;i<s->bodyLen;i+=3){
+        if(i<MAX_FOODS){ foods[i].x=s->body[i].x; foods[i].y=s->body[i].y; foods[i].color=rand()%8; }
+    }
+    if(s==&player){ dead=1; deadReason=reason; }
+    else kills++;
 }
-back=(u32*)memalign(64, W*H*4);
-memset(back,0,W*H*4);
-gcmResetFlipStatus();
+
+void moveSnake(Snake *s, int isPlayer){
+    float target;
+    if(isPlayer){
+        if(fabs(joyX)>0.15 || fabs(joyY)>0.15) target=atan2f(joyY, joyX);
+        else target=s->angle;
+        // BORDA MATA - PS3
+        if(fabs(s->x)>=1490 || fabs(s->y)>=1490){
+            if(shieldOn){ s->x=fmaxf(-1480,fminf(1480,s->x)); s->y=fmaxf(-1480,fminf(1480,s->y)); }
+            else { killSnake(s,1); return; }
+        }
+    } else {
+        // BOT - vai na comida mais perto
+        if(rand()%100<2){
+            float best=1e9; int bi=-1;
+            for(int i=0;i<MAX_FOODS;i++){ float dx=foods[i].x-s->x, dy=foods[i].y-s->y; float d=dx*dx+dy*dy; if(d<best){best=d; bi=i;} }
+            if(bi>=0){ s->tx=foods[bi].x; s->ty=foods[bi].y; }
+        }
+        target=atan2f(s->ty-s->y, s->tx-s->x);
+        if(fabs(s->x)>1350 || fabs(s->y)>1350) target=atan2f(0-s->y, 0-s->x);
+    }
+    float diff=target-s->angle;
+    while(diff>M_PI) diff-=2*M_PI; while(diff<-M_PI) diff+=2*M_PI;
+    if(diff>0.09) diff=0.09; if(diff<-0.09) diff=-0.09;
+    s->angle+=diff;
+    float sp=3.5f; if(isPlayer && boostOn) sp=6.0f;
+    s->x+=cosf(s->angle)*sp; s->y+=sinf(s->angle)*sp;
+    // corpo segue cabeça
+    for(int i=s->bodyLen-1;i>0;i--) s->body[i]=s->body[i-1];
+    s->body[0].x=s->x; s->body[0].y=s->y;
+    int maxLen=12+s->score; if(maxLen>MAX_BODY) maxLen=MAX_BODY;
+    if(s->bodyLen<maxLen) s->bodyLen++;
+    // comer
+    for(int i=0;i<MAX_FOODS;i++){
+        float dx=foods[i].x-s->x, dy=foods[i].y-s->y;
+        float range = (isPlayer && magnetOn)? 120*120 : 600;
+        if(dx*dx+dy*dy < range){
+            if(isPlayer && magnetOn && dx*dx+dy*dy>600){ foods[i].x+=(s->x-foods[i].x)*0.2; foods[i].y+=(s->y-foods[i].y)*0.2; continue; }
+            s->score++; if(isPlayer) foodsEaten++;
+            foods[i].x=frand(-1500,1500); foods[i].y=frand(-1500,1500); foods[i].color=rand()%8;
+            break;
+        }
+    }
+    if(isPlayer){
+        for(int i=0;i<8;i++){
+            if(fabs(powers[i].x-s->x)<25 && fabs(powers[i].y-s->y)<25){
+                if(powers[i].type==0){ shieldOn=1; shieldTime=300; }
+                if(powers[i].type==1){ magnetOn=1; magnetTime=400; }
+                if(powers[i].type==2){ s->score+=10; }
+                powers[i].x=frand(-1500,1500); powers[i].y=frand(-1500,1500); powers[i].type=rand()%3;
+            }
+        }
+        if(shieldTime>0) shieldTime--; else shieldOn=0;
+        if(magnetTime>0) magnetTime--; else magnetOn=0;
+    }
 }
-static void wait_flip(void){
-while(gcmGetFlipStatus()!=0) usleep(200);
-gcmResetFlipStatus();
+
+// Desenha circulo com Tiny3D
+void drawCircle(float sx, float sy, float r, int color){
+    float cr=((color>>16)&0xFF)/255.0f, cg=((color>>8)&0xFF)/255.0f, cb=(color&0xFF)/255.0f;
+    tiny3d_SetPolygon(TINY3D_POLYGON);
+    for(int i=0;i<16;i++){
+        float a1=i*6.28f/16, a2=(i+1)*6.28f/16;
+        tiny3d_VertexPos(sx, sy, 0);
+        tiny3d_VertexColor(tiny3d_Blend(cr,cg,cb,1));
+        tiny3d_VertexPos(sx+cosf(a1)*r, sy+sinf(a1)*r, 0);
+        tiny3d_VertexColor(tiny3d_Blend(cr,cg,cb,1));
+        tiny3d_VertexPos(sx+cosf(a2)*r, sy+sinf(a2)*r, 0);
+        tiny3d_VertexColor(tiny3d_Blend(cr,cg,cb,1));
+    }
+    tiny3d_End();
 }
-static void present(void){
-if(!first_flip) wait_flip(); else gcmResetFlipStatus();
-memcpy(fb[cur], back, W*H*4);
-gcmSetFlip(ctx, cur);
-rsxFlushBuffer(ctx);
-gcmSetWaitFlip(ctx);
-cur ^= 1; first_flip=0;
+
+// CORRIGIDO: cabeça do bot com olhos!
+void drawSnake(Snake *s, float camX, float camY, int isPlayer){
+    if(!s->alive) return;
+    for(int i=s->bodyLen-1;i>=0;i--){
+        float sx=s->body[i].x-camX, sy=s->body[i].y-camY;
+        if(sx<-30||sx>1280+30||sy<-30||sy>720+30) continue;
+        float r = (i==0)?15:11;
+        int col = skinColors[s->skin][i%6];
+        if(isPlayer) col = skinColors[0][i%6]; // player arco-iris
+        drawCircle(sx, sy, r, col);
+        if(i==0){
+            // CABEÇA - OLHOS BRANCOS + PRETOS - AGORA BOT TEM CABEÇA!
+            float ax=cosf(s->angle), ay=sinf(s->angle);
+            float px=-ay, py=ax;
+            drawCircle(sx+ax*7+px*6, sy+ay*7+py*6, 5, 0xFFFFFF);
+            drawCircle(sx+ax*7-px*6, sy+ay*7-py*6, 5, 0xFFFFFF);
+            drawCircle(sx+ax*9+px*6, sy+ay*9+py*6, 2.5, 0x000000);
+            drawCircle(sx+ax*9-px*6, sy+ay*9-py*6, 2.5, 0x000000);
+            // escudo
+            if(isPlayer && shieldOn){
+                tiny3d_SetPolygon(TINY3D_LINE_LOOP);
+                for(int k=0;k<20;k++){ float a=k*6.28f/20; tiny3d_VertexPos(sx+cosf(a)*22, sy+sinf(a)*22, 0); tiny3d_VertexColor(tiny3d_Blend(0,0.6,1,1)); }
+                tiny3d_End();
+            }
+        }
+    }
 }
-static void fill_rect(int x,int y,int w,int h,u32 c){
-int x0=x<0?0:x, y0=y<0?0:y;
-int x1=x+w, y1=y+h;
-if(x1>(int)W) x1=W; if(y1>(int)H) y1=H;
-for(int yy=y0;yy<y1;yy++){ u32 *p=back+yy*W; for(int xx=x0;xx<x1;xx++) p[xx]=c; }
-}
-static void circle(int cx,int cy,int r,u32 c){
-if(r<1) r=1;
-for(int dy=-r;dy<=r;dy++){
-int y=cy+dy; if(y<0||y>=(int)H) continue;
-int hw=(int)sqrtf((float)(r*r-dy*dy));
-int x0=cx-hw, x1=cx+hw;
-if(x0<0) x0=0; if(x1>=(int)W) x1=W-1;
-u32 *p=back+y*W;
-for(int x=x0;x<=x1;x++) p[x]=c;
-}
-}
-static void draw_track_point(int x,int y,u32 c){
-for(int dy=-3;dy<=3;dy++) for(int dx=-3;dx<=3;dx++){ int xx=x+dx, yy=y+dy; if(xx>=0&&xx<(int)W&&yy>=0&&yy<(int)H) back[yy*W+xx]=c; }
-}
-static void draw_moto(int mx,int my,float ang,int is_red){
-int cbody = is_red ? 0x00FF3B30 : 0x00222222;
-int cacc = is_red ? 0x00FFD700 : 0x00FFD700;
-float ca=cosf(ang), sa=sinf(ang);
-int wx1 = mx + (int)(-30*ca - 0*sa);
-int wy1 = my + (int)(-30*sa + 0*ca);
-int wx2 = mx + (int)(30*ca);
-int wy2 = my + (int)(30*sa);
-circle(wx1, wy1, 18, 0x00000000);
-circle(wx1, wy1, 8, 0x00DDDDDD);
-circle(wx2, wy2, 18, 0x00000000);
-circle(wx2, wy2, 8, 0x00DDDDDD);
-for(int i=-30;i<=30;i++){ int x=mx+(int)(i*ca); int y=my+(int)(i*sa); if(x>=0&&x<(int)W&&y>=0&&y<(int)H) back[y*W+x]=cbody; }
-circle(mx, my-22, 11, 0x00FFD700);
-circle(mx-5, my-32, 8, 0x00333333);
-fill_rect(mx-8, my-18, 18, 20, 0x003366FF);
-}
-static float px=200, py=0, vx=0, loop_ang=0;
-static int score=0, in_loop=0, cam=0;
-static float ground_y;
-static void render(void){
-ground_y = H*0.75f;
-for(int y=0;y<(int)H;y++){
-u32 c = 0x00A8D8FF - (y*0x30);
-for(u32 x=0;x<W;x++) back[y*W+x]=c;
-}
-for(int x=0;x<(int)W;x++){
-int h = H*0.55f + sinf(x*0.008f)*40 + sinf(x*0.02f)*20;
-for(int y=h;y<(int)H;y++) back[y*W+x]=0x007AB8E8;
-}
-for(int x=0;x<(int)W;x++){
-int h = H*0.68f + sinf(x*0.015f+2)*25;
-for(int y=h;y<(int)H;y++) back[y*W+x]=0x005AA0D0;
-}
-int lx1 = W*0.28f - cam*0.2f;
-int lx2 = W*0.78f - cam*0.2f;
-int ly = H*0.45f;
-for(int a=0;a<360;a++){
-float r=a*PI/180;
-int x=lx1+(int)(cosf(r)*130);
-int y=ly+(int)(sinf(r)*130);
-if(a>20 && a<340) draw_track_point(x,y,0x00C00000);
-}
-for(int a=0;a<360;a++){
-float r=a*PI/180;
-int x=lx2+(int)(cosf(r)*110);
-int y=ly+(int)(sinf(r)*110);
-if(a>300 || a<100) draw_track_point(x,y,0x00C00000);
-}
-for(int x=0;x<(int)W;x++){
-int y = ground_y + sinf(x*0.01f)*10;
-draw_track_point(x, y, 0x00C00000);
-}
-int mx = (int)px - cam;
-int my = (int)py;
-if(in_loop){
-mx = lx1 + (int)(cosf(loop_ang)*130);
-my = ly + (int)(sinf(loop_ang)*130);
-draw_moto(mx, my, loop_ang+PI/2, 1);
-} else {
-draw_moto(mx, my, 0, 1);
-draw_moto(mx+W*0.45f, my-60, -0.3f, 0);
-}
-}
-int main(int argc, char **argv){
-(void)argc; (void)argv;
-init_screen();
-ioPadInit(7);
-sysUtilRegisterCallback(0, sysutil_cb, NULL);
-ground_y = H*0.75f;
-py = ground_y;
-while(running){
-sysUtilCheckCallback();
-padInfo info; padData d;
-ioPadGetInfo(&info);
-if(info.status[0]){
-ioPadGetData(0,&d);
-if(!in_loop){
-if(d.BTN_CROSS){ vx+=0.5f; if(vx>15) vx=15; } else vx*=0.985f;
-if(d.BTN_SQUARE) vx*=0.88f;
-}
-}
-if(in_loop){
-loop_ang += 0.11f;
-if(loop_ang >= PI*1.5f){ in_loop=0; px = W*0.28f+160; py=ground_y; vx=12; }
-} else {
-px+=vx; cam+= (int)vx*0.5f;
-if(px > W*0.28f-20 && px < W*0.28f+20 && vx>8){ in_loop=1; loop_ang=PI*0.5f; score+=100; }
-}
-if(px>W+80){ px=-60; cam=0; }
-render();
-present();
-}
-return 0;
+
+int main(){
+    tiny3d_Init(1024*1024);
+    ioPadInit(7);
+    libfont_Init();
+    initGame();
+    sysUtilRegisterCallback(0, NULL, NULL);
+
+    while(1){
+        // ===== LE CONTROLE PS3 =====
+        ioPadGetInfo(&padinfo);
+        if(padinfo.status[0]){
+            ioPadGetData(0, &paddata);
+            // L3 ANALOGICO - CORRIGIDO: 128 = centro, 0-255
+            int lx = paddata.ANA_L_H - 128;
+            int ly = paddata.ANA_L_V - 128;
+            if(abs(lx)>20 || abs(ly)>20){ joyX=lx/128.0f; joyY=ly/128.0f; }
+            // X = BOOST (BTN_CROSS)
+            boostOn = (paddata.BTN_CROSS) ? 1 : 0;
+            // O = ESCUDO (BTN_CIRCLE) - aperta e ativa
+            if(paddata.BTN_CIRCLE && !shieldOn){ shieldOn=1; shieldTime=300; }
+            // TRIANGULO = IMÃ
+            if(paddata.BTN_TRIANGLE && !magnetOn){ magnetOn=1; magnetTime=400; }
+            // START = reinicia se morreu
+            if(dead && paddata.BTN_START){ initGame(); }
+            // X TAMBEM VOLTA SE MORREU - TELA DE MORTE SIMPLES!
+            if(dead && paddata.BTN_CROSS){ initGame(); }
+            // SELECT = sair
+            if(paddata.BTN_SELECT) break;
+        }
+
+        if(!dead){
+            moveSnake(&player, 1);
+            for(int i=0;i<MAX_BOTS;i++) if(bots[i].alive) moveSnake(&bots[i], 0);
+            // colisão player x bots
+            for(int i=0;i<MAX_BOTS;i++){
+                if(!bots[i].alive) continue;
+                for(int j=6;j<bots[i].bodyLen;j+=2){
+                    float dx=player.x-bots[i].body[j].x, dy=player.y-bots[i].body[j].y;
+                    if(dx*dx+dy*dy<200){ if(shieldOn) shieldOn=0; else { killSnake(&player,0); break; } }
+                }
+                if(!player.alive) break;
+                // bot bate no player -> bot morre
+                for(int j=6;j<player.bodyLen;j+=2){
+                    float dx=bots[i].x-player.body[j].x, dy=bots[i].y-player.body[j].y;
+                    if(dx*dx+dy*dy<200){ killSnake(&bots[i],0); break; }
+                }
+            }
+            // respawn bots
+            for(int i=0;i<MAX_BOTS;i++) if(!bots[i].alive && rand()%100<1){ bots[i].alive=1; bots[i].x=frand(-1300,1300); bots[i].y=frand(-1300,1300); bots[i].score=12; bots[i].bodyLen=20; }
+        }
+
+        // ===== DESENHA =====
+        tiny3d_Clear(0x151528FF, TINY3D_CLEAR_ALL);
+        tiny3d_Project2D();
+        float camX=player.x-640, camY=player.y-360;
+        // fundo
+        // borda vermelha
+        tiny3d_SetPolygon(TINY3D_LINE_LOOP);
+        tiny3d_VertexPos(-1500-camX, -1500-camY, 0); tiny3d_VertexColor(tiny3d_Blend(1,0,0,1));
+        tiny3d_VertexPos(1500-camX, -1500-camY, 0); tiny3d_VertexColor(tiny3d_Blend(1,0,0,1));
+        tiny3d_VertexPos(1500-camX, 1500-camY, 0); tiny3d_VertexColor(tiny3d_Blend(1,0,0,1));
+        tiny3d_VertexPos(-1500-camX, 1500-camY, 0); tiny3d_VertexColor(tiny3d_Blend(1,0,0,1));
+        tiny3d_End();
+        // comidas
+        int foodCols[8]={0xFF0000,0xFF8800,0xFFFF00,0x00FF00,0x0088FF,0xAA00FF,0xFF44FF,0x00FFFF};
+        for(int i=0;i<MAX_FOODS;i++){ float sx=foods[i].x-camX, sy=foods[i].y-camY; if(sx<-20||sx>1300||sy<-20||sy>740) continue; drawCircle(sx,sy,6,foodCols[foods[i].color]); }
+        // powers
+        for(int i=0;i<8;i++){ float sx=powers[i].x-camX, sy=powers[i].y-camY; if(sx<-20||sx>1300||sy<-20||sy>740) continue; int c=powers[i].type==0?0x00AAFF:powers[i].type==1?0xFF00FF:0xFFD23F; drawCircle(sx,sy,10,c); }
+        // cobras - bots primeiro, player por cima
+        for(int i=0;i<MAX_BOTS;i++) drawSnake(&bots[i], camX, camY, 0);
+        drawSnake(&player, camX, camY, 1);
+
+        // HUD - SEM BOTÃO INVISÍVEL, SÓ TEXTO!
+        libfont_DrawString(10, 10, "SLITHER.IO PS3", 0xFFFFFFFF);
+        char buf[64]; sprintf(buf, "Tamanho: %d  Cobras: %d", player.score, 16);
+        libfont_DrawString(10, 30, buf, 0xFFFFFFFF);
+        sprintf(buf, "Comidas: %d  Matou: %d", foodsEaten, kills);
+        libfont_DrawString(10, 50, buf, 0xFFFFFFFF);
+        if(shieldOn) libfont_DrawString(10, 70, "ESCUDO ATIVO!", 0x00AAFFFF);
+        if(magnetOn) libfont_DrawString(10, 90, "IMA ATIVO!", 0xFF00FFFF);
+
+        // TELA DE MORTE - SIMPLES! SÓ APERTA X!
+        if(dead){
+            // fundo escuro
+            tiny3d_SetPolygon(TINY3D_QUADS);
+            tiny3d_VertexPos(0,0,0); tiny3d_VertexColor(tiny3d_Blend(0,0,0,0.8));
+            tiny3d_VertexPos(1280,0,0); tiny3d_VertexColor(tiny3d_Blend(0,0,0,0.8));
+            tiny3d_VertexPos(1280,720,0); tiny3d_VertexColor(tiny3d_Blend(0,0,0,0.8));
+            tiny3d_VertexPos(0,720,0); tiny3d_VertexColor(tiny3d_Blend(0,0,0,0.8));
+            tiny3d_End();
+            libfont_DrawString(500, 250, "VOCE MORREU!", 0xFF4444FF);
+            if(deadReason==1) libfont_DrawString(460, 290, "BATEU NA BORDA!", 0xFFFFFFFF);
+            else libfont_DrawString(460, 290, "BATEU NA COBRA!", 0xFFFFFFFF);
+            sprintf(buf, "Tamanho: %d  Comidas: %d  Matou: %d", player.score, foodsEaten, kills);
+            libfont_DrawString(430, 330, buf, 0xFFFFFFFF);
+            libfont_DrawString(400, 400, "APERTE X PARA JOGAR DE NOVO", 0x00FF88FF);
+            libfont_DrawString(440, 430, "SELECT PARA SAIR", 0x888888FF);
+        }
+
+        tiny3d_Flip();
+        sysUtilCheckCallback();
+    }
+    ioPadEnd();
+    return 0;
 }
