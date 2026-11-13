@@ -1,11 +1,28 @@
-TITLE		:= SLITHER.IO PS3
-APPID		:= SLTH00001
-CONTENTID	:= UP0001-$(APPID)_00-0000000000000000
+# ASTRONOMIA QUIZ PS3 - JA PRONTO
+TARGET = ASTRONOMIA_QUIZ_PS3
 
-TARGET		:= slither_ps3
-SOURCES		:= .
-INCLUDES	:= .
-
-LIBS		:= -lrsx -lgcm_sys -lio -lsysutil -lrt -llv2 -lm
-
+PSL1GHT ?= /usr/local/psl1ght
 include $(PSL1GHT)/ppu_rules
+
+INCLUDE = -I$(PSL1GHT)/ppu/include -I$(PSL1GHT)/portlibs/ppu/include
+LIBDIRS = -L$(PSL1GHT)/ppu/lib -L$(PSL1GHT)/portlibs/ppu/lib
+LIBS = -lrsx -lgcm_sys -lio -lsysutil -lm
+
+CFILES = main.c
+OFILES = $(CFILES:.c=.o)
+
+all: $(TARGET).elf $(TARGET).self
+
+$(TARGET).elf: $(OFILES)
+	$(CC) $(CFLAGS) $(OFILES) -o $@ $(LIBDIRS) $(LIBS)
+
+%.o: %.c
+	$(CC) $(CFLAGS) $(INCLUDE) -c $< -o $@
+
+%.self: %.elf
+	$(SPRX) $< $@
+
+clean:
+	rm -f $(OFILES) $(TARGET).elf $(TARGET).self
+
+.PHONY: all clean
