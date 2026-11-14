@@ -132,6 +132,7 @@ static void initScreen(void)
     flipBuffer(1);
 }
 
+/* Copia o canvas para o framebuffer do RSX (com escala se nao for 720p) */
 static void present(RsxBuf *b) __attribute__((unused));
 static void present(RsxBuf *b)
 {
@@ -182,19 +183,16 @@ static void sysutil_exit_callback(u64 status, u64 param, void *usrdata)
  *  GRAFICOS 2D (software)
  * ============================================================ */
 
-static inline float clampf(float v, float lo, float hi) __attribute__((unused));
 static inline float clampf(float v, float lo, float hi)
 {
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
-static inline float lerpf(float a, float b, float t) __attribute__((unused));
 static inline float lerpf(float a, float b, float t)
 {
     return a + (b - a) * t;
 }
 
-static inline u32 mixc(u32 a, u32 b, int t) __attribute__((unused));
 static inline u32 mixc(u32 a, u32 b, int t)
 {
     u32 ia, r, g, bl;
@@ -203,11 +201,10 @@ static inline u32 mixc(u32 a, u32 b, int t)
     ia = 255 - t;
     r  = (((a >> 16) & 255) * ia + ((b >> 16) & 255) * t) / 255;
     g  = (((a >> 8) & 255) * ia + ((b >> 8) & 255) * t) / 255;
-    bl = ((a & 255) * ia + ((b & 255) * t) / 255;
+    bl = ((a & 255) * ia + (b & 255) * t) / 255;
     return (r << 16) | (g << 8) | bl;
 }
 
-static inline void px_put(int x, int y, u32 c, int a) __attribute__((unused));
 static inline void px_put(int x, int y, u32 c, int a)
 {
     u32 *p;
@@ -220,7 +217,6 @@ static inline void px_put(int x, int y, u32 c, int a)
         *p = mixc(*p, c, a);
 }
 
-static void g_rect(int x, int y, int w, int h, u32 c, int a) __attribute__((unused));
 static void g_rect(int x, int y, int w, int h, u32 c, int a)
 {
     int x0 = x < 0 ? 0 : x;
@@ -239,7 +235,6 @@ static void g_rect(int x, int y, int w, int h, u32 c, int a)
     }
 }
 
-static void g_vgrad(int x, int y, int w, int h, u32 c1, u32 c2) __attribute__((unused));
 static void g_vgrad(int x, int y, int w, int h, u32 c1, u32 c2)
 {
     int i;
@@ -249,7 +244,6 @@ static void g_vgrad(int x, int y, int w, int h, u32 c1, u32 c2)
     }
 }
 
-static void g_ellipse(float cx, float cy, float rx, float ry, u32 c, int a) __attribute__((unused));
 static void g_ellipse(float cx, float cy, float rx, float ry, u32 c, int a)
 {
     int x0 = (int)(cx - rx - 1), x1 = (int)(cx + rx + 2);
@@ -282,13 +276,11 @@ static void g_ellipse(float cx, float cy, float rx, float ry, u32 c, int a)
     }
 }
 
-static void g_circle(float cx, float cy, float r, u32 c, int a) __attribute__((unused));
 static void g_circle(float cx, float cy, float r, u32 c, int a)
 {
     g_ellipse(cx, cy, r, r, c, a);
 }
 
-static void g_rrectg(float x, float y, float w, float h, float r, u32 c1, u32 c2, int a) __attribute__((unused));
 static void g_rrectg(float x, float y, float w, float h, float r, u32 c1, u32 c2, int a)
 {
     int x0, x1, y0, y1, xx, yy;
@@ -328,13 +320,11 @@ static void g_rrectg(float x, float y, float w, float h, float r, u32 c1, u32 c2
     }
 }
 
-static void g_rrect(float x, float y, float w, float h, float r, u32 c, int a) __attribute__((unused));
 static void g_rrect(float x, float y, float w, float h, float r, u32 c, int a)
 {
     g_rrectg(x, y, w, h, r, c, c, a);
 }
 
-static void g_tri(float x0, float y0, float x1, float y1, float x2, float y2, u32 c, int a) __attribute__((unused));
 static void g_tri(float x0, float y0, float x1, float y1, float x2, float y2, u32 c, int a)
 {
     float minx = MINF(x0, MINF(x1, x2)), maxx = MAXF(x0, MAXF(x1, x2));
@@ -352,7 +342,7 @@ static void g_tri(float x0, float y0, float x1, float y1, float x2, float y2, u3
         for (x = ix0; x <= ix1; x++) {
             float px = (float)x + 0.5f, py = (float)y + 0.5f;
             float w0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) / area;
-            float w1 = ((x2 - px) * (y0 - py) - (0.0f - px) * (y2 - py)) / area;
+            float w1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) / area;
             float w2 = 1.0f - w0 - w1;
             if (w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f)
                 px_put(x, y, c, a);
@@ -360,7 +350,6 @@ static void g_tri(float x0, float y0, float x1, float y1, float x2, float y2, u3
     }
 }
 
-static void g_line(float x0, float y0, float x1, float y1, float th, u32 c) __attribute__((unused));
 static void g_line(float x0, float y0, float x1, float y1, float th, u32 c)
 {
     float dx = x1 - x0, dy = y1 - y0;
@@ -428,13 +417,11 @@ static const unsigned char gfont[][7] = {
     { 8, 4, 2, 2, 2, 4, 8 }             /* ) */
 };
 
-static int text_width(const char *s, int sc) __attribute__((unused));
 static int text_width(const char *s, int sc)
 {
     return (int)strlen(s) * 6 * sc;
 }
 
-static void g_text(int x, int y, const char *s, int sc, u32 c) __attribute__((unused));
 static void g_text(int x, int y, const char *s, int sc, u32 c)
 {
     for (; *s; s++) {
@@ -456,14 +443,12 @@ static void g_text(int x, int y, const char *s, int sc, u32 c)
     }
 }
 
-static void g_text_sh(int x, int y, const char *s, int sc, u32 c) __attribute__((unused));
 static void g_text_sh(int x, int y, const char *s, int sc, u32 c)
 {
     g_text(x + sc, y + sc, s, sc, RGB(20, 20, 40));
     g_text(x, y, s, sc, c);
 }
 
-static void g_text_center(int cx, int y, const char *s, int sc, u32 c) __attribute__((unused));
 static void g_text_center(int cx, int y, const char *s, int sc, u32 c)
 {
     g_text_sh(cx - text_width(s, sc) / 2, y, s, sc, c);
@@ -537,14 +522,12 @@ typedef struct {
 static Input in;
 #define PRESSED(n) (in.n && !in.p##n)
 
-static void set_msg(const char *s) __attribute__((unused));
 static void set_msg(const char *s)
 {
     snprintf(msgText, sizeof(msgText), "%s", s);
     msgTimer = 2.2f;
 }
 
-static void add_popup(float x, float y, const char *t, u32 col) __attribute__((unused));
 static void add_popup(float x, float y, const char *t, u32 col)
 {
     int i;
@@ -560,7 +543,6 @@ static void add_popup(float x, float y, const char *t, u32 col)
     }
 }
 
-static void clamp_stats(void) __attribute__((unused));
 static void clamp_stats(void)
 {
     hunger = clampf(hunger, 0.0f, 100.0f);
@@ -569,7 +551,6 @@ static void clamp_stats(void)
     fun = clampf(fun, 0.0f, 100.0f);
 }
 
-static int dirt_count(void) __attribute__((unused));
 static int dirt_count(void)
 {
     int i, n = 0;
@@ -578,7 +559,6 @@ static int dirt_count(void)
     return n;
 }
 
-static void add_dirt(void) __attribute__((unused));
 static void add_dirt(void)
 {
     int tries;
@@ -591,7 +571,6 @@ static void add_dirt(void)
     }
 }
 
-static void reset_drop(Drop *d, int initial) __attribute__((unused));
 static void reset_drop(Drop *d, int initial)
 {
     float x0 = 590.0f + (float)(rand() % 120);
@@ -601,7 +580,6 @@ static void reset_drop(Drop *d, int initial)
     d->vy = 650.0f + (float)(rand() % 250);
 }
 
-static void init_game(void) __attribute__((unused));
 static void init_game(void)
 {
     int i;
@@ -619,10 +597,34 @@ static void init_game(void)
  * ============================================================ */
 
 /* type: 0 maca, 1 hamburguer, 2 pocao, 3 podre */
-static void draw_item(int type, float x, float y, float s) __attribute__((unused));
 static void draw_item(int type, float x, float y, float s)
 {
     if (type == 0) {
         g_ellipse(x, y + 2 * s, 25 * s, 23 * s, RGB(205, 35, 45), 255);
         g_ellipse(x + 7 * s, y + 7 * s, 17 * s, 14 * s, RGB(160, 20, 38), 110);
-        g_ellipse(x - 9 * s, y - 8 * s
+        g_ellipse(x - 9 * s, y - 8 * s, 6 * s, 9 * s, RGB(255, 255, 255), 130);
+        g_line(x, y - 21 * s, x + 3 * s, y - 31 * s, 3 * s, RGB(110, 70, 40));
+        g_ellipse(x + 13 * s, y - 27 * s, 11 * s, 5 * s, RGB(90, 190, 80), 255);
+    } else if (type == 1) {
+        g_ellipse(x, y - 14 * s, 31 * s, 20 * s, RGB(228, 160, 78), 255);
+        g_ellipse(x - 8 * s, y - 20 * s, 14 * s, 8 * s, RGB(255, 210, 140), 120);
+        g_ellipse(x - 12 * s, y - 26 * s, 3 * s, 1.6f * s, RGB(255, 245, 210), 255);
+        g_ellipse(x + 2 * s, y - 30 * s, 3 * s, 1.6f * s, RGB(255, 245, 210), 255);
+        g_ellipse(x + 14 * s, y - 24 * s, 3 * s, 1.6f * s, RGB(255, 245, 210), 255);
+        g_ellipse(x - 2 * s, y - 20 * s, 3 * s, 1.6f * s, RGB(255, 245, 210), 255);
+        g_rrect(x - 34 * s, y - 9 * s, 68 * s, 9 * s, 4 * s, RGB(105, 190, 70), 255);
+        g_rrect(x - 31 * s, y - 1 * s, 62 * s, 5 * s, 2 * s, RGB(255, 205, 60), 255);
+        g_rrect(x - 32 * s, y + 3 * s, 64 * s, 11 * s, 5 * s, RGB(110, 60, 35), 255);
+        g_rrect(x - 30 * s, y + 12 * s, 60 * s, 13 * s, 6 * s, RGB(222, 155, 75), 255);
+    } else if (type == 2) {
+        g_rrect(x - 8 * s, y - 32 * s, 16 * s, 24 * s, 4 * s, RGB(205, 232, 255), 255);
+        g_circle(x, y + 6 * s, 24 * s, RGB(205, 232, 255), 255);
+        g_circle(x, y + 8 * s, 20 * s, RGB(190, 60, 205), 255);
+        g_ellipse(x + 6 * s, y + 14 * s, 13 * s, 8 * s, RGB(150, 30, 175), 140);
+        g_rect((int)(x - 2 * s), (int)(y + 1 * s), (int)(4 * s) + 1, (int)(14 * s), RGB(255, 255, 255), 230);
+        g_rect((int)(x - 7 * s), (int)(y + 6 * s), (int)(14 * s) + 1, (int)(4 * s) + 1, RGB(255, 255, 255), 230);
+        g_ellipse(x - 10 * s, y - 2 * s, 4 * s, 9 * s, RGB(255, 255, 255), 150);
+        g_rrect(x - 10 * s, y - 40 * s, 20 * s, 10 * s, 3 * s, RGB(170, 120, 70), 255);
+    } else {
+        g_ellipse(x, y + 2 * s, 24 * s, 22 * s, RGB(105, 120, 50), 255);
+        g_ellipse(x +
