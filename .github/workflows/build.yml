@@ -1,25 +1,61 @@
-name: Build PS3 PKG
+name: Compilar Pou PS3
 
 on:
   push:
-    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/ps3dev/ps3dev:latest
+    container: ubuntu:20.04
     steps:
-      - name: Baixar código do repositório
-        uses: actions/checkout@v4
-
-      - name: Compilar jogo e gerar PKG
+      - name: Dependencias
         run: |
-          make pkg
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y curl make git python2 python3 libgmp10 libelf1 zlib1g libssl1.1 bzip2 xz-utils
+          ln -sf /usr/bin/python2 /usr/bin/python
 
-      - name: Enviar arquivo PKG pronto
-        uses: actions/upload-artifact@v4
+      - uses: actions/checkout@v4
+
+      - name: Baixar toolchain do PS3
+        run: |
+          curl -sL https://github.com/bucanero/ps3toolchain/releases/download/ubuntu-latest-fad3b5fb/ps3dev-ubuntu-latest-2020-08-31.tar.gz | tar xz -C /opt
+          echo "PS3DEV=/opt/ps3dev" >> $GITHUB_ENV
+          echo "PSL1GHT=/opt/ps3dev" >> $GITHUB_ENV
+          echo "/opt/ps3dev/bin" >> $GITHUB_PATH
+          echo "/opt/ps3dev/ppu/bin" >> $GITHUB_PATH
+
+      - name: Gerar icone do Pou
+        run: |
+          python3 - <<'PY'
+          import zlib, struct, math
+          W, H = 320, 176
+          raw = b''
+          for y in range(H):
+              raw += b'\x00'
+              for x in range(W):
+                  px = (90, 185, 255) if y < 130 else (210, 175, 130)
+                  dx = (x - 160) / (58.0 + (y - 60) * 0.35)
+                  dy = (y - 98) / 56.0
+                  if 38 <= y <= 145 and dx*dx + dy*dy <= 1.0:
+                      shade = max(0.65, 1.0 - 0.35 * (dx*dx + dy*dy))
+                      px = (int(196 * shade), int(142 * shade), int(88 * shade))
+                  for ex in (142, 178):
+                      d2 = (x - ex)**2 + (y - 78)**2
+                      if d2 <= 144: px = (255, 255, 255)
+                      if (x - ex - 2)**2 + (y - 78)**2 <= 36: px = (20, 20, 20)
+                  raw += bytes(px)
+          def chunk(t, d):
+              c = struct.pack('>I', len(d)) + t + d
+              return c + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
+          png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', W, H, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
+          open('ICON0.PNG', 'wb').write(png)
+          PY
+
+      - name: Compilar
+        run: make
+
+      - uses: actions/upload-artifact@v4
         with:
           name: pou-ps3-pkg
-          path: "*.pkg"
+          path: pou.pkg
