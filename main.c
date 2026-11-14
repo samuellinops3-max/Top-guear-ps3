@@ -220,7 +220,7 @@ static void g_rect(int x, int y, int w, int h, u32 c, int a)
     int x1 = (x + w) > VW ? VW : (x + w);
     int y1 = (y + h) > VH ? VH : (y + h);
     int xx, yy;
-    if (a <= 0 || x0 >= x1 || y0 >= y1) return;
+    if (a <= 0) return;
     for (yy = y0; yy < y1; yy++) {
         u32 *row = cv + yy * VW;
         if (a >= 255) {
@@ -592,6 +592,7 @@ static void init_game(void)
  *  OBJETOS (comidas)
  * ============================================================ */
 
+/* type: 0 maca, 1 hamburguer, 2 pocao, 3 podre */
 static void draw_item(int type, float x, float y, float s)
 {
     if (type == 0) {
@@ -626,4 +627,4 @@ static void draw_item(int type, float x, float y, float s)
         g_circle(x - 9 * s, y + 6 * s, 4 * s, RGB(60, 70, 30), 255);
         g_circle(x + 10 * s, y + 9 * s, 3 * s, RGB(60, 70, 30), 255);
         g_line(x - 12 * s, y - 8 * s, x - 5 * s, y - 1 * s, 2 * s, RGB(35, 40, 20));
-        g_line(x - 5 * s, y - 8 * s, x - 12 * s, y - 1 * s, 2 * s, RGB(35, 4
+        g_line(x - 5 * s, y - 8 * s, x - 12 * s, 
