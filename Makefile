@@ -1,81 +1,38 @@
 ifeq ($(strip $(PSL1GHT)),)
-$(error "PSL1GHT is not set. Export it: export PSL1GHT=$$PS3DEV/psl1ght")
+$(error "Defina a variavel PSL1GHT")
 endif
-
 include $(PSL1GHT)/ppu_rules
 
-TARGET		:= PouPS3
-TITLE		:= Pou PS3
-APPID		:= POUPS3001
-CONTENTID	:= UP0001-$(APPID)_00-0000000000000000
+.DEFAULT_GOAL := all
 
-BUILD		:= build
-SOURCES		:= .
-DATA		:= data
-INCLUDES	:= -I$(PSL1GHT)/ppu/include/SDL -I$(PORTLIBS)/include -I$(PORTLIBS)/include/SDL
+TARGET    := pou
+TITLE     := Pou PS3
+APPID     := POUPS3001
+CONTENTID := UP0001-$(APPID)_00-0000000000000000
+SFOXML    := sfo.xml
+PORTLIBS  := $(PS3DEV)/portlibs/ppu
 
-CFLAGS		:= -O2 -Wall -mcpu=cell -mhard-float -I$(PSL1GHT)/ppu/include $(INCLUDES)
-CXXFLAGS	:= $(CFLAGS) -fno-exceptions -fno-rtti -std=c++11
-LDFLAGS		:= -L$(PSL1GHT)/ppu/lib -L$(PORTLIBS)/lib
-
-LIBS		:= -lSDL_image -lSDL -lpng -ljpeg -lz -laudio -lio -lrsx -lgcm_sys -lsysutil -lsysmodule -lm
-
-CFILES		:= $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
-CPPFILES	:= $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
-SFILES		:= $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.S)))
-
-OFILES		:= $(CFILES:.c=.o) $(CPPFILES:.cpp=.o) $(SFILES:.S=.o)
-OFILES		:= $(OFILES:%=$(BUILD)/%)
-
-PKGDIR		:= pkg
+MACHDEP := -mhard-float -fmodulo-sched -ffunction-sections -fdata-sections
+CFLAGS  := -O2 -Wall -mcpu=cell $(MACHDEP) -I$(PSL1GHT)/ppu/include -I$(PORTLIBS)/include
+LDFLAGS := $(MACHDEP) -L$(PSL1GHT)/ppu/lib -L$(PORTLIBS)/lib
+LIBS    := -lrsx -lgcm_sys -lio -lsysutil -lrt -llv2 -lm
 
 all: $(TARGET).pkg
 
-pkg: $(TARGET).pkg
+main.o: main.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
-$(TARGET).elf: $(OFILES)
-	@echo "Linking $@..."
-	@$(CXX) $(OFILES) $(LDFLAGS) $(LIBS) -o $@
+$(TARGET).elf: main.o
+	$(CC) $(LDFLAGS) -o $@ $< $(LIBS)
 
-$(TARGET).self: $(TARGET).elf
-	@echo "Making SELF..."
-	@$(SELF) $< $@
-
-EBOOT.BIN: $(TARGET).self
-	@echo "Making EBOOT.BIN..."
-	@$(MAKE_SELF_NPDRM) $< $@ $(CONTENTID)
-
-PARAM.SFO: sfo.xml
-	@echo "Making PARAM.SFO..."
-	@$(SFO) --from-xml $< $@
-
-$(TARGET).pkg: EBOOT.BIN PARAM.SFO
-	@echo "Making PKG..."
-	@rm -rf $(PKGDIR)
-	@mkdir -p $(PKGDIR)/USRDIR
-	@cp EBOOT.BIN $(PKGDIR)/USRDIR/EBOOT.BIN
-	@cp PARAM.SFO $(PKGDIR)/PARAM.SFO
-	@if [ -d $(DATA) ]; then cp -r $(DATA) $(PKGDIR)/USRDIR/; fi
-	@if [ -f ICON0.PNG ]; then cp ICON0.PNG $(PKGDIR)/ICON0.PNG; else cp $(PSL1GHT)/ppu/data/ICON0.PNG $(PKGDIR)/ICON0.PNG 2>/dev/null || true; fi
-	@$(PKG) --contentid $(CONTENTID) $(PKGDIR)/ $(TARGET).pkg
-	@echo "Done: $(TARGET).pkg"
-
-$(BUILD)/%.o: %.cpp
-	@mkdir -p $(BUILD)
-	@echo "Compiling $<..."
-	@$(CXX) $(CXXFLAGS) -c $< -o $@
-
-$(BUILD)/%.o: %.c
-	@mkdir -p $(BUILD)
-	@echo "Compiling $<..."
-	@$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD)/%.o: %.S
-	@mkdir -p $(BUILD)
-	@echo "Assembling $<..."
-	@$(CC) $(CFLAGS) -c $< -o $@
+$(TARGET).pkg: $(TARGET).elf ICON0.PNG $(SFOXML)
+	rm -rf pkg
+	mkdir -p pkg/USRDIR
+	cp ICON0.PNG pkg/ICON0.PNG
+	$(PS3DEV)/bin/sprxlinker $(TARGET).elf
+	$(PS3DEV)/bin/make_self_npdrm $(TARGET).elf pkg/USRDIR/EBOOT.BIN $(CONTENTID)
+	$(PS3DEV)/bin/sfo.py --title "$(TITLE)" --appid "$(APPID)" -f $(SFOXML) pkg/PARAM.SFO
+	$(PS3DEV)/bin/pkg.py --contentid $(CONTENTID) pkg/ $@
 
 clean:
-	@rm -rf $(BUILD) $(TARGET).elf $(TARGET).self EBOOT.BIN PARAM.SFO $(TARGET).pkg $(PKGDIR)
-
-.PHONY: all pkg clean
+	rm -rf pkg *.o *.elf *.self *.pkg
