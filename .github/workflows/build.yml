@@ -2,29 +2,27 @@ name: Build PS3 PKG
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: ps3dev/ps3dev:latest
+      image: psl1ght/psl1ght:latest
     steps:
-      - name: Checkout
+      - name: Baixar código do repositório
         uses: actions/checkout@v4
 
-      - name: Build PKG
+      - name: Compilar jogo e gerar PKG
         run: |
-          export PSL1GHT=$PS3DEV/psl1ght
-          export PATH=$PS3DEV/ppu/bin:$PATH
+          export PS3DEV=/usr/local/ps3dev
+          export PSL1GHT=$PS3DEV
+          export PATH=$PATH:$PS3DEV/bin:$PS3DEV/ppu/bin:$PS3DEV/spu/bin
           make pkg
 
-      - name: Upload PKG
+      - name: Enviar arquivo PKG pronto
         uses: actions/upload-artifact@v4
         with:
-          name: PouPS3-pkg
+          name: pou-ps3-pkg
           path: "*.pkg"
-          if-no-files-found: error
