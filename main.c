@@ -1,15 +1,10 @@
 /*
- * BLOBI - Bichinho virtual para PS3 (PSL1GHT)  --  VERSAO OTIMIZADA
+ * BLOBI - Bichinho virtual para PS3 (PSL1GHT)
  * ------------------------------------------------------------
- * Otimizacoes:
- *  - Canvas interno 640x360 (4x menos pixels pra desenhar); o present()
- *    escala 2x pro framebuffer do RSX. As coordenadas do jogo continuam
- *    em 1280x720 (as primitivas convertem sozinhas).
- *  - Forca saida 720p quando disponivel (evita escalar 1080p na CPU).
- *  - Mistura de cores sem divisao inteira (div255 por soma/shift).
- *  - Render + CPU rodam ANTES do waitFlip (overlap com o vsync).
- *  - dt real (relogio do sistema): se cair o FPS, o jogo nao vira
- *    camera lenta.
+ * Video : RSX framebuffer XRGB (sem SDL), dois buffers + vsync.
+ *         O jogo desenha num canvas 1280x720 em memoria principal
+ *         e copia (com escala, se preciso) para o buffer do RSX.
+ * Input : io/pad.h
  *
  * Controles:
  *   L1 / R1        : trocar de sala
@@ -30,7 +25,6 @@
 #include <malloc.h>
 
 #include <ppu-types.h>
-#include <sys/systime.h>
 #include <sysutil/sysutil.h>
 #include <sysutil/video.h>
 #include <rsx/rsx.h>
@@ -39,18 +33,13 @@
 #define CB_SIZE    0x100000
 #define HOST_SIZE  (32 * 1024 * 1024)
 
-/* coordenadas logicas do jogo */
 #define VW 1280
 #define VH 720
-/* canvas interno (metade) */
-#define CW 640
-#define CH 360
 #define PI_F 3.14159265f
 
 #define RGB(r, g, b) ((((u32)(r)) << 16) | (((u32)(g)) << 8) | ((u32)(b)))
 #define MINF(a, b) ((a) < (b) ? (a) : (b))
 #define MAXF(a, b) ((a) > (b) ? (a) : (b))
-#define DIV255(v) ((((v) + 128) + (((v) + 128) >> 8)) >> 8)
 
 #ifndef MAX_PADS
 #define MAX_PADS 7
@@ -72,13 +61,14 @@ static videoState vstate;
 static videoConfiguration vconfig;
 static videoResolution vres;
 static RsxBuf buffers[2];
-static int currentBuffer = 0;
-static padInfo padinfo;
-static padData paddata;
+static int currentBuffer __attribute__((unused)) = 0;
+static padInfo padinfo __attribute__((unused));
+static padData paddata __attribute__((unused));
 static volatile int running = 0;
 
-static u32 *cv = NULL;   /* canvas 640x360 em memoria principal */
+static u32 *cv = NULL;   /* canvas 1280x720 em memoria principal */
 
+static void waitFlip(void) __attribute__((unused));
 static void waitFlip(void)
 {
     while (gcmGetFlipStatus() != 0)
@@ -119,21 +109,13 @@ error:
 static void initScreen(void)
 {
     void *host_addr = memalign(1024 * 1024, HOST_SIZE);
-    u32 res;
     rsxInit(&context, CB_SIZE, HOST_SIZE, host_addr);
 
     videoGetState(0, 0, &vstate);
-    res = vstate.displayMode.resolution;
-
-    /* forca 720p se a TV/console aceitar (evita escalar na CPU) */
-    if (videoGetResolutionAvailability(VIDEO_PRIMARY, VIDEO_RESOLUTION_720,
-                                       VIDEO_ASPECT_AUTO, 0) == 1)
-        res = VIDEO_RESOLUTION_720;
-
-    videoGetResolution(res, &vres);
+    videoGetResolution(vstate.displayMode.resolution, &vres);
 
     memset(&vconfig, 0, sizeof(videoConfiguration));
-    vconfig.resolution = res;
+    vconfig.resolution = vstate.displayMode.resolution;
     vconfig.format = VIDEO_BUFFER_FORMAT_XRGB;
     vconfig.pitch = vres.width * sizeof(u32);
 
@@ -149,42 +131,35 @@ static void initScreen(void)
     flipBuffer(1);
 }
 
-/* Copia o canvas 640x360 para o framebuffer do RSX, escalando.
- * Monta cada linha numa memoria normal e faz um unico memcpy por linha
- * (nunca le da memoria do RSX, que e lentissima). */
+/* Copia o canvas para o framebuffer do RSX (com escala se nao for 720p) */
 static void present(RsxBuf *b)
 {
     static int *xmap = NULL;
-    static u32 *line = NULL;
-    static int lw = 0;
-    int x, y, lastsy = -1;
+    static int xmap_w = 0;
+    int x, y;
 
     if (b->ptr == NULL)
         return;
 
-    if (line == NULL || xmap == NULL || lw != b->width) {
+    if (b->width == VW && b->height == VH) {
+        memcpy(b->ptr, cv, VW * VH * sizeof(u32));
+        return;
+    }
+
+    if (xmap == NULL || xmap_w != b->width) {
         if (xmap) free(xmap);
-        if (line) free(line);
         xmap = (int *)malloc(b->width * sizeof(int));
-        line = (u32 *)memalign(128, b->width * sizeof(u32));
-        lw = b->width;
-        if (xmap == NULL || line == NULL) {
-            lw = 0;
-            return;
-        }
+        xmap_w = b->width;
         for (x = 0; x < b->width; x++)
-            xmap[x] = (x * CW) / b->width;
+            xmap[x] = (x * VW) / b->width;
     }
 
     for (y = 0; y < b->height; y++) {
-        int sy = (y * CH) / b->height;
-        if (sy != lastsy) {
-            u32 *src = cv + sy * CW;
-            for (x = 0; x < b->width; x++)
-                line[x] = src[xmap[x]];
-            lastsy = sy;
-        }
-        memcpy(b->ptr + y * b->width, line, b->width * sizeof(u32));
+        int sy = (y * VH) / b->height;
+        u32 *dst = b->ptr + y * b->width;
+        u32 *src = cv + sy * VW;
+        for (x = 0; x < b->width; x++)
+            dst[x] = src[xmap[x]];
     }
 }
 
@@ -203,8 +178,6 @@ static void sysutil_exit_callback(u64 status, u64 param, void *usrdata)
 
 /* ============================================================
  *  GRAFICOS 2D (software)
- *  Todas as funcoes g_* recebem coordenadas LOGICAS (1280x720).
- *  Internamente desenham no canvas de 640x360.
  * ============================================================ */
 
 static inline float clampf(float v, float lo, float hi)
@@ -223,22 +196,18 @@ static inline u32 mixc(u32 a, u32 b, int t)
     if (t <= 0) return a;
     if (t >= 255) return b;
     ia = 255 - t;
-    r  = ((a >> 16) & 255) * ia + ((b >> 16) & 255) * t;
-    g  = ((a >> 8) & 255) * ia + ((b >> 8) & 255) * t;
-    bl = (a & 255) * ia + (b & 255) * t;
-    r  = DIV255(r);
-    g  = DIV255(g);
-    bl = DIV255(bl);
+    r  = (((a >> 16) & 255) * ia + ((b >> 16) & 255) * t) / 255;
+    g  = (((a >> 8) & 255) * ia + ((b >> 8) & 255) * t) / 255;
+    bl = ((a & 255) * ia + ((b & 255) * t) / 255;
     return (r << 16) | (g << 8) | bl;
 }
 
-/* x,y em coordenadas do CANVAS (640x360) */
 static inline void px_put(int x, int y, u32 c, int a)
 {
     u32 *p;
-    if (a <= 0 || (unsigned)x >= CW || (unsigned)y >= CH)
+    if (a <= 0 || (unsigned)x >= VW || (unsigned)y >= VH)
         return;
-    p = &cv[y * CW + x];
+    p = &cv[y * VW + x];
     if (a >= 255)
         *p = c;
     else
@@ -247,21 +216,14 @@ static inline void px_put(int x, int y, u32 c, int a)
 
 static void g_rect(int x, int y, int w, int h, u32 c, int a)
 {
-    int x0 = (x + 1) >> 1;
-    int x1 = (x + w + 1) >> 1;
-    int y0 = (y + 1) >> 1;
-    int y1 = (y + h + 1) >> 1;
+    int x0 = x < 0 ? 0 : x;
+    int y0 = y < 0 ? 0 : y;
+    int x1 = (x + w) > VW ? VW : (x + w);
+    int y1 = (y + h) > VH ? VH : (y + h);
     int xx, yy;
-    if (a <= 0 || w <= 0 || h <= 0) return;
-    if (x1 == x0) x1 = x0 + 1;
-    if (y1 == y0) y1 = y0 + 1;
-    if (x0 < 0) x0 = 0;
-    if (y0 < 0) y0 = 0;
-    if (x1 > CW) x1 = CW;
-    if (y1 > CH) y1 = CH;
-    if (x0 >= x1 || y0 >= y1) return;
+    if (a <= 0) return;
     for (yy = y0; yy < y1; yy++) {
-        u32 *row = cv + yy * CW;
+        u32 *row = cv + yy * VW;
         if (a >= 255) {
             for (xx = x0; xx < x1; xx++) row[xx] = c;
         } else {
@@ -273,34 +235,29 @@ static void g_rect(int x, int y, int w, int h, u32 c, int a)
 static void g_vgrad(int x, int y, int w, int h, u32 c1, u32 c2)
 {
     int i;
-    for (i = 0; i < h; i += 2) {
-        int hh = (h - i) < 2 ? (h - i) : 2;
+    for (i = 0; i < h; i++) {
         u32 c = mixc(c1, c2, h > 1 ? (i * 255) / (h - 1) : 0);
-        g_rect(x, y + i, w, hh, c, 255);
+        g_rect(x, y + i, w, 1, c, 255);
     }
 }
 
 static void g_ellipse(float cx, float cy, float rx, float ry, u32 c, int a)
 {
-    int x0, x1, y0, y1, x, y;
-    float m, irx, iry;
-    cx *= 0.5f; cy *= 0.5f; rx *= 0.5f; ry *= 0.5f;
+    int x0 = (int)(cx - rx - 1), x1 = (int)(cx + rx + 2);
+    int y0 = (int)(cy - ry - 1), y1 = (int)(cy + ry + 2);
+    int x, y;
+    float m = rx < ry ? rx : ry;
     if (rx <= 0.0f || ry <= 0.0f || a <= 0) return;
-    x0 = (int)(cx - rx - 1); x1 = (int)(cx + rx + 2);
-    y0 = (int)(cy - ry - 1); y1 = (int)(cy + ry + 2);
-    m = rx < ry ? rx : ry;
-    irx = 1.0f / rx;
-    iry = 1.0f / ry;
     if (x0 < 0) x0 = 0;
     if (y0 < 0) y0 = 0;
-    if (x1 > CW) x1 = CW;
-    if (y1 > CH) y1 = CH;
+    if (x1 > VW) x1 = VW;
+    if (y1 > VH) y1 = VH;
     for (y = y0; y < y1; y++) {
-        float dy = ((float)y + 0.5f - cy) * iry;
+        float dy = ((float)y + 0.5f - cy) / ry;
         float dy2 = dy * dy;
         if (dy2 > 1.3f) continue;
         for (x = x0; x < x1; x++) {
-            float dx = ((float)x + 0.5f - cx) * irx;
+            float dx = ((float)x + 0.5f - cx) / rx;
             float d2 = dx * dx + dy2;
             float cov;
             if (d2 > 1.4f) continue;
@@ -325,7 +282,6 @@ static void g_rrectg(float x, float y, float w, float h, float r, u32 c1, u32 c2
 {
     int x0, x1, y0, y1, xx, yy;
     float cx, cy, hx, hy;
-    x *= 0.5f; y *= 0.5f; w *= 0.5f; h *= 0.5f; r *= 0.5f;
     if (r > w * 0.5f) r = w * 0.5f;
     if (r > h * 0.5f) r = h * 0.5f;
     x0 = (int)floorf(x) - 1;
@@ -334,8 +290,8 @@ static void g_rrectg(float x, float y, float w, float h, float r, u32 c1, u32 c2
     y1 = (int)ceilf(y + h) + 1;
     if (x0 < 0) x0 = 0;
     if (y0 < 0) y0 = 0;
-    if (x1 > CW) x1 = CW;
-    if (y1 > CH) y1 = CH;
+    if (x1 > VW) x1 = VW;
+    if (y1 > VH) y1 = VH;
     cx = x + w * 0.5f;
     cy = y + h * 0.5f;
     hx = w * 0.5f - r;
@@ -368,26 +324,22 @@ static void g_rrect(float x, float y, float w, float h, float r, u32 c, int a)
 
 static void g_tri(float x0, float y0, float x1, float y1, float x2, float y2, u32 c, int a)
 {
-    float minx, maxx, miny, maxy, area, iarea;
-    int ix0, ix1, iy0, iy1;
+    float minx = MINF(x0, MINF(x1, x2)), maxx = MAXF(x0, MAXF(x1, x2));
+    float miny = MINF(y0, MINF(y1, y2)), maxy = MAXF(y0, MAXF(y1, y2));
+    int ix0 = (int)floorf(minx), ix1 = (int)ceilf(maxx);
+    int iy0 = (int)floorf(miny), iy1 = (int)ceilf(maxy);
+    float area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
     int x, y;
-    x0 *= 0.5f; y0 *= 0.5f; x1 *= 0.5f; y1 *= 0.5f; x2 *= 0.5f; y2 *= 0.5f;
-    minx = MINF(x0, MINF(x1, x2)); maxx = MAXF(x0, MAXF(x1, x2));
-    miny = MINF(y0, MINF(y1, y2)); maxy = MAXF(y0, MAXF(y1, y2));
-    ix0 = (int)floorf(minx); ix1 = (int)ceilf(maxx);
-    iy0 = (int)floorf(miny); iy1 = (int)ceilf(maxy);
-    area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
     if (fabsf(area) < 0.01f) return;
-    iarea = 1.0f / area;
     if (ix0 < 0) ix0 = 0;
     if (iy0 < 0) iy0 = 0;
-    if (ix1 > CW - 1) ix1 = CW - 1;
-    if (iy1 > CH - 1) iy1 = CH - 1;
+    if (ix1 > VW - 1) ix1 = VW - 1;
+    if (iy1 > VH - 1) iy1 = VH - 1;
     for (y = iy0; y <= iy1; y++) {
         for (x = ix0; x <= ix1; x++) {
             float px = (float)x + 0.5f, py = (float)y + 0.5f;
-            float w0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) * iarea;
-            float w1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) * iarea;
+            float w0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) / area;
+            float w1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) / area;
             float w2 = 1.0f - w0 - w1;
             if (w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f)
                 px_put(x, y, c, a);
@@ -399,7 +351,7 @@ static void g_line(float x0, float y0, float x1, float y1, float th, u32 c)
 {
     float dx = x1 - x0, dy = y1 - y0;
     float len = sqrtf(dx * dx + dy * dy);
-    int n = (int)(len / (th * 0.5f + 1.0f)) + 1;
+    int n = (int)(len / (th * 0.35f + 0.5f)) + 1;
     int i;
     for (i = 0; i <= n; i++) {
         float t = (float)i / (float)n;
@@ -480,13 +432,10 @@ static void g_text(int x, int y, const char *s, int sc, u32 c)
             continue;
         }
         gi = (int)(p - gchars);
-        for (r = 0; r < 7; r++) {
-            unsigned char bits = gfont[gi][r];
-            if (bits == 0) continue;
+        for (r = 0; r < 7; r++)
             for (col = 0; col < 5; col++)
-                if (bits & (16 >> col))
+                if (gfont[gi][r] & (16 >> col))
                     g_rect(x + col * sc, y + r * sc, sc, sc, c, 255);
-        }
         x += 6 * sc;
     }
 }
@@ -644,6 +593,7 @@ static void init_game(void)
  *  OBJETOS (comidas)
  * ============================================================ */
 
+/* type: 0 maca, 1 hamburguer, 2 pocao, 3 podre */
 static void draw_item(int type, float x, float y, float s)
 {
     if (type == 0) {
@@ -654,4 +604,27 @@ static void draw_item(int type, float x, float y, float s)
         g_ellipse(x + 13 * s, y - 27 * s, 11 * s, 5 * s, RGB(90, 190, 80), 255);
     } else if (type == 1) {
         g_ellipse(x, y - 14 * s, 31 * s, 20 * s, RGB(228, 160, 78), 255);
-        g_ellipse(x - 8 * s, y - 20 * s, 14 * 
+        g_ellipse(x - 8 * s, y - 20 * s, 14 * s, 8 * s, RGB(255, 210, 140), 120);
+        g_ellipse(x - 12 * s, y - 26 * s, 3 * s, 1.6f * s, RGB(255, 245, 210), 255);
+        g_ellipse(x + 2 * s, y - 30 * s, 3 * s, 1.6f * s, RGB(255, 245, 210), 255);
+        g_ellipse(x + 14 * s, y - 24 * s, 3 * s, 1.6f * s, RGB(255, 245, 210), 255);
+        g_ellipse(x - 2 * s, y - 20 * s, 3 * s, 1.6f * s, RGB(255, 245, 210), 255);
+        g_rrect(x - 34 * s, y - 9 * s, 68 * s, 9 * s, 4 * s, RGB(105, 190, 70), 255);
+        g_rrect(x - 31 * s, y - 1 * s, 62 * s, 5 * s, 2 * s, RGB(255, 205, 60), 255);
+        g_rrect(x - 32 * s, y + 3 * s, 64 * s, 11 * s, 5 * s, RGB(110, 60, 35), 255);
+        g_rrect(x - 30 * s, y + 12 * s, 60 * s, 13 * s, 6 * s, RGB(222, 155, 75), 255);
+    } else if (type == 2) {
+        g_rrect(x - 8 * s, y - 32 * s, 16 * s, 24 * s, 4 * s, RGB(205, 232, 255), 255);
+        g_circle(x, y + 6 * s, 24 * s, RGB(205, 232, 255), 255);
+        g_circle(x, y + 8 * s, 20 * s, RGB(190, 60, 205), 255);
+        g_ellipse(x + 6 * s, y + 14 * s, 13 * s, 8 * s, RGB(150, 30, 175), 140);
+        g_rect((int)(x - 2 * s), (int)(y + 1 * s), (int)(4 * s) + 1, (int)(14 * s), RGB(255, 255, 255), 230);
+        g_rect((int)(x - 7 * s), (int)(y + 6 * s), (int)(14 * s) + 1, (int)(4 * s) + 1, RGB(255, 255, 255), 230);
+        g_ellipse(x - 10 * s, y - 2 * s, 4 * s, 9 * s, RGB(255, 255, 255), 150);
+        g_rrect(x - 10 * s, y - 40 * s, 20 * s, 10 * s, 3 * s, RGB(170, 120, 70), 255);
+    } else {
+        g_ellipse(x, y + 2 * s, 24 * s, 22 * s, RGB(105, 120, 50), 255);
+        g_ellipse(x + 6 * s, y + 6 * s, 15 * s, 13 * s, RGB(70, 85, 35), 130);
+        g_circle(x - 9 * s, y + 6 * s, 4 * s, RGB(60, 70, 30), 255);
+        g_circle(x + 10 * s, y + 9 * s, 3 * s, RGB(60, 70, 30), 255);
+        g
