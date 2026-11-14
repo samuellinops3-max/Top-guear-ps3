@@ -1,236 +1,563 @@
-// ASTRONOMIA QUIZ PS3 - mesma base do Cobra Arena que ja funciona
+// Pou PS3 - Recriacao completa em C
+// PSL1GHT + SDL 1.2 - 1280x720
+// Controles: Analogico Esq = olhar / mover cesta | X = interagir | L1/R1 = trocar sala | START = sair
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <unistd.h>
-#include <malloc.h>
-#include <ppu-types.h>
-#include <sysutil/sysutil.h>
-#include <sysutil/video.h>
-#include <rsx/rsx.h>
+#include <time.h>
+#include <SDL/SDL.h>
+#include <SDL/SDL_ttf.h>
+#include <SDL/SDL_image.h>
 #include <io/pad.h>
+#include <sysutil/video.h>
 
-#define CB_SIZE   (0x100000)
-#define HOST_SIZE (32 * 1024 * 1024)
+#define SCREEN_W 1280
+#define SCREEN_H 720
+#define FPS 60
+#define FRAME_DELAY 1000 / FPS
 
+// Cores
+#define RGB(r,g,b) SDL_MapRGB(screen->format, r,g,b)
+
+SDL_Surface *screen = NULL;
+TTF_Font *font = NULL;
+TTF_Font *fontSmall = NULL;
+TTF_Font *fontBig = NULL;
+
+padInfo padinfo;
+padData paddata;
+
+// Estado do Pou
 typedef struct {
-    char pergunta[90];
-    char pergunta2[90];
-    char opA[60];
-    char opB[60];
-    char opC[60];
-    char opD[60];
-    int correta;
-    char curiosidade[90];
-} Pergunta;
+    int fome;      // 0-100, 100 = cheio
+    int saude;     // 0-100
+    int energia;   // 0-100
+    int diversao;  // 0-100
+    int moedas;
+    int sala; // 0 Cozinha, 1 Banheiro, 2 Quarto, 3 Jogos
+    int piscar;
+    int piscarTimer;
+    int frame;
+} PouState;
 
-static Pergunta perguntas[] = {
-    {"Qual planeta e o mais", "proximo do Sol?", "Venus", "Mercurio", "Terra", "Marte", 1, "Mercurio leva 88 dias!"},
-    {"Qual planeta e o", "Planeta Vermelho?", "Jupiter", "Venus", "Marte", "Saturno", 2, "Marte tem montanha de 21km!"},
-    {"Qual e a estrela mais", "proxima da Terra?", "Sirius", "Sol", "Alfa Centauri", "Polaris", 1, "Luz do Sol leva 8 min!"},
-    {"Qual planeta tem os", "aneis mais famosos?", "Netuno", "Urano", "Jupiter", "Saturno", 3, "Aneis sao de gelo!"},
-    {"O que e um buraco negro?", "Estrela que suga tudo", "Planeta escuro", "Estrela que suga tudo", "Cometa", "Nuvem", 1, "Nem a luz escapa!"},
-    {"Qual galaxia a gente vive?", "Via Lactea", "Andromeda", "Via Lactea", "Triangulo", "Sombrero", 1, "Tem 100 bilhoes de estrelas!"},
-    {"Quem pisou primeiro", "na Lua?", "Yuri Gagarin", "Buzz Aldrin", "Neil Armstrong", "M Collins", 2, "Foi em 1969!"},
-    {"Qual e o maior planeta", "do Sistema Solar?", "Saturno", "Netuno", "Jupiter", "Terra", 2, "Cabem 1300 Terras!"},
-    {"O que a Lua faz", "pra Terra?", "Nada", "Causa as mares", "Esquenta", "Faz chover", 1, "Sem Lua dia seria 6h!"},
-    {"Qual planeta e o", "mais quente?", "Mercurio", "Marte", "Venus", "Terra", 2, "Venus faz 465 graus!"},
-    {"O que e uma supernova?", "Explosao de estrela", "Estrela nova", "Explosao de estrela", "Asteroide", "Eclipse", 1, "Brilha mais que galaxia!"},
-    {"Qual planeta e o mais", "distante do Sol?", "Urano", "Netuno", "Plutao", "Saturno", 1, "Ventos de 2100 km/h!"},
-    {"Quantos planetas tem", "o Sistema Solar?", "7", "8", "9", "10", 1, "Plutao virou anao em 2006!"},
-    {"O que e a NASA?", "Agencia dos EUA", "Agencia dos EUA", "Agencia do Brasil", "Um planeta", "Um foguete", 0, "Mandou homem pra Lua!"},
-    {"O que e um ano-luz?", "Distancia da luz", "Um ano com luz", "Distancia da luz", "Tempo da luz", "Um planeta", 1, "9,4 trilhoes de km!"},
-};
-#define TOTAL (sizeof(perguntas)/sizeof(perguntas[0]))
+PouState pou;
 
-static gcmContextData *ctx;
-static u32 W, H;
-static u32 *fb[2];
-static u32 fboff[2];
-static u32 *back;
-static int cur = 0, first_flip = 1;
-static volatile int running = 1;
+// Minigame - comidas caindo
+#define MAX_FOOD 8
+typedef struct {
+    int x, y;
+    int speed;
+    int tipo; // 0 maca, 1 bolo, 2 pizza, 3 cenoura
+    int ativo;
+} Food;
 
-static void sysutil_cb(u64 status, u64 param, void *usrdata) { (void)param; (void)usrdata; if (status == SYSUTIL_EXIT_GAME) running = 0; }
+Food foods[MAX_FOOD];
+int cestaX = 640;
+int scoreGame = 0;
+int gameTimer = 0;
+int gameAtivo = 0;
 
-static void init_screen(void) {
-    void *host = memalign(1024*1024, HOST_SIZE);
-    rsxInit(&ctx, CB_SIZE, HOST_SIZE, host);
-    videoState st; videoGetState(VIDEO_PRIMARY, 0, &st);
-    u32 resid = st.displayMode.resolution;
-    if (videoGetResolutionAvailability(VIDEO_PRIMARY, VIDEO_RESOLUTION_720, VIDEO_ASPECT_AUTO, 0)) resid = VIDEO_RESOLUTION_720;
-    videoResolution res; videoGetResolution(resid, &res); W = res.width; H = res.height;
-    videoConfiguration vc; memset(&vc, 0, sizeof(vc)); vc.resolution = resid; vc.format = VIDEO_BUFFER_FORMAT_XRGB; vc.aspect = VIDEO_ASPECT_AUTO; vc.pitch = W*4;
-    videoConfigure(VIDEO_PRIMARY, &vc, NULL, 0); videoGetState(VIDEO_PRIMARY, 0, &st);
-    gcmSetFlipMode(GCM_FLIP_VSYNC);
-    for (int i=0;i<2;i++){ fb[i]=(u32*)rsxMemalign(64, W*H*4); gcmAddressToOffset(fb[i], &fboff[i]); gcmSetDisplayBuffer(i, fboff[i], W*4, W, H); }
-    back=(u32*)memalign(64, W*H*4); memset(back,0,W*H*4); gcmResetFlipStatus();
-}
-static void wait_flip(void){ while(gcmGetFlipStatus()!=0) usleep(200); gcmResetFlipStatus(); }
-static void present(void){ if(!first_flip) wait_flip(); else gcmResetFlipStatus(); memcpy(fb[cur], back, W*H*4); gcmSetFlip(ctx, cur); rsxFlushBuffer(ctx); gcmSetWaitFlip(ctx); cur ^= 1; first_flip = 0; }
-
-static void fill_rect(int x,int y,int w,int h,u32 c){
-    int x0=x<0?0:x, y0=y<0?0:y, x1=x+w, y1=y+h;
-    if(x1>(int)W) x1=W; if(y1>(int)H) y1=H;
-    for(int yy=y0;yy<y1;yy++){ u32 *p=back+yy*W; for(int xx=x0;xx<x1;xx++) p[xx]=c; }
-}
-static void circle(int cx,int cy,int r,u32 c){
-    if(r<1) r=1; for(int dy=-r;dy<=r;dy++){ int y=cy+dy; if(y<0||y>=(int)H) continue; int hw=(int)sqrtf((float)(r*r-dy*dy)); int x0=cx-hw, x1=cx+hw; if(x0<0) x0=0; if(x1>=(int)W) x1=W-1; u32 *p=back+y*W; for(int x=x0;x<=x1;x++) p[x]=c; }
-}
-typedef struct { char c; const char *p; } Glyph;
-static const Glyph glyphs[] = {
-    {'0',"###" "#.#" "#.#" "#.#" "###"}, {'1',".#." "##." ".#." ".#." "###"},
-    {'2',"###" "..#" "###" "#.." "###"}, {'3',"###" "..#" "###" "..#" "###"},
-    {'4',"#.#" "#.#" "###" "..#" "..#"}, {'5',"###" "#.." "###" "..#" "###"},
-    {'6',"###" "#.." "###" "#.#" "###"}, {'7',"###" "..#" "..#" "..#" "..#"},
-    {'8',"###" "#.#" "###" "#.#" "###"}, {'9',"###" "#.#" "###" "..#" "###"},
-    {'A',".#." "#.#" "###" "#.#" "#.#"}, {'B',"##." "#.#" "##." "#.#" "##."},
-    {'C',"###" "#.." "#.." "#.." "###"}, {'D',"##." "#.#" "#.#" "#.#" "##."},
-    {'E',"###" "#.." "###" "#.." "###"}, {'F',"###" "#.." "###" "#.." "#.."},
-    {'G',"###" "#.." "#.#" "#.#" "###"}, {'H',"#.#" "#.#" "###" "#.#" "#.#"},
-    {'I',"###" ".#." ".#." ".#." "###"}, {'J',"###" "..#" "..#" "#.#" "###"},
-    {'L',"#.." "#.." "#.." "#.." "###"}, {'M',"#.#" "###" "###" "#.#" "#.#"},
-    {'N',"#.#" "###" "###" "#.#" "#.#"}, {'O',"###" "#.#" "#.#" "#.#" "###"},
-    {'P',"###" "#.#" "###" "#.." "#.."}, {'Q',"###" "#.#" "#.#" "##." ".#."},
-    {'R',"##." "#.#" "##." "#.#" "#.#"}, {'S',"###" "#.." "###" "..#" "###"},
-    {'T',"###" ".#." ".#." ".#." ".#."}, {'U',"#.#" "#.#" "#.#" "#.#" "###"},
-    {'V',"#.#" "#.#" "#.#" "#.#" ".#."}, {'X',"#.#" "#.#" ".#." "#.#" "#.#"},
-    {'Z',"###" "..#" ".#." "#.." "###"}, {'?',"###" "..#" ".#." "..." ".#."},
-    {'!',".#." ".#." ".#." "..." ".#."}, {'.', "..." "..." "..." "..." ".#."},
-    {':', "..." ".#." "..." ".#." "..."}, {'-', "..." "..." "###" "..." "..."},
-    {'/', "..#" "..#" ".#." "#.." "#.."}, {'+', "..." ".#." "###" ".#." "..."},
-    {'%', "#.#" "..#" ".#." "#.." "#.#"}, {' ', "..." "..." "..." "..." "..."},
-};
-static const char *find_glyph(char c){ for(unsigned i=0;i<sizeof(glyphs)/sizeof(glyphs[0]);i++) if(glyphs[i].c==c) return glyphs[i].p; return NULL; }
-static int text_width(const char *s,int sc){ return (int)strlen(s)*4*sc - sc; }
-static void draw_text(const char *s,int x,int y,int sc,u32 c){
-    for(;*s;s++){ const char *g=find_glyph(*s); if(g) for(int r=0;r<5;r++) for(int k=0;k<3;k++) if(g[r*3+k]=='#') fill_rect(x+k*sc, y+r*sc, sc, sc, c); x+=4*sc; }
-}
-static void draw_text_center(const char *s,int y,int sc,u32 c){ draw_text(s, (int)W/2 - text_width(s,sc)/2, y, sc, c); }
-
-// ESTADO DO JOGO
-static int estado = 0; // 0=menu 1=pergunta 2=mostra resposta 3=fim
-static int idx = 0, pontos = 0, vidas = 3, acertos = 0;
-static int escolha = -1, timer_resposta = 0;
-static int btn_prev = 0;
-
-static void render(void){
-    // fundo espacial
-    u32 n = W*H; for(u32 i=0;i<n;i++) back[i]=0x000A0A2E;
-    // estrelas
-    for(int i=0;i<100;i++){ int sx=(i*173)%(int)W, sy=(i*97)%(int)H; fill_rect(sx,sy,3,3,0x00FFFFFF); }
-    // planeta decorativo
-    circle((int)W-120, 90, 45, 0x00FF8800); circle((int)W-135, 75, 10, 0x00FFAA00);
-    fill_rect(0,0,W,2,0x00A855F7);
-    int ui = 4;
-    if(estado==0){
-        draw_text_center("ASTRONOMIA", 120, 10, 0x00FFFFFF);
-        draw_text_center("QUIZ PS3", 190, 10, 0x00FACC15);
-        circle((int)W/2, 320, 60, 0x00FFD23F);
-        circle((int)W/2-20, 300, 12, 0x00FFAA00);
-        circle((int)W/2+15, 340, 8, 0x00FF8800);
-        draw_text_center("15 PERGUNTAS", 420, 4, 0x00FFFFFF);
-        draw_text_center("3 VIDAS - 100 PTS", 460, 4, 0x0088FFAA);
-        draw_text_center("X = A  QUADRADO = B", 530, 4, 0x00FFFFFF);
-        draw_text_center("BOLA = C  TRIANGULO = D", 570, 4, 0x00FFFFFF);
-        draw_text_center("APERTE START", 630, 6, 0x00FACC15);
-    } else if(estado==1 || estado==2){
-        char buf[64];
-        sprintf(buf, "PERGUNTA %d / %d", idx+1, (int)TOTAL);
-        draw_text(buf, 30, 30, 4, 0x00FFFFFF);
-        sprintf(buf, "PONTOS %d", pontos); draw_text(buf, 30, 65, 4, 0x00FACC15);
-        sprintf(buf, "VIDAS %d", vidas); draw_text(buf, (int)W-200, 30, 4, 0x00FF4D4D);
-        Pergunta *p = &perguntas[idx];
-        draw_text_center(p->pergunta, 140, 5, 0x00FFFFFF);
-        draw_text_center(p->pergunta2, 175, 5, 0x00FFFFFF);
-        // opcoes
-        const char *opts[4] = {p->opA, p->opB, p->opC, p->opD};
-        const char *letras[4] = {"A - X", "B - QUADRADO", "C - BOLA", "D - TRIANGULO"};
-        u32 cores[4] = {0x002563EB, 0x0000C853, 0x00FF8800, 0x00C77DFF};
-        for(int i=0;i<4;i++){
-            int y = 240 + i*90;
-            u32 cor = cores[i];
-            if(estado==2){
-                if(i==p->correta) cor = 0x0022C55E;
-                else if(i==escolha) cor = 0x00EF4444;
-                else cor = 0x00334155;
+// Utils desenho
+void drawFilledCircle(SDL_Surface *dst, int cx, int cy, int radius, Uint32 color) {
+    for (int y = -radius; y <= radius; y++) {
+        for (int x = -radius; x <= radius; x++) {
+            if (x*x + y*y <= radius*radius) {
+                int px = cx + x;
+                int py = cy + y;
+                if (px >= 0 && px < SCREEN_W && py >= 0 && py < SCREEN_H) {
+                    Uint32 *pixels = (Uint32*)dst->pixels;
+                    pixels[py * dst->w + px] = color;
+                }
             }
-            fill_rect(100, y, (int)W-200, 70, cor);
-            draw_text(letras[i], 130, y+12, 3, 0x00FFFFFF);
-            draw_text(opts[i], 130, y+38, 3, 0x00FFFFFF);
         }
-        if(estado==2){
-            if(escolha==p->correta) draw_text_center("ACERTOU! +100", 610, 5, 0x0022C55E);
-            else draw_text_center("ERROU! -1 VIDA", 610, 5, 0x00EF4444);
-            draw_text_center(p->curiosidade, 650, 3, 0x00FACC15);
-        }
-    } else if(estado==3){
-        char buf[64];
-        draw_text_center("FIM DE JOGO!", 120, 8, 0x00FACC15);
-        sprintf(buf, "PONTOS %d", pontos); draw_text_center(buf, 220, 6, 0x00FFFFFF);
-        sprintf(buf, "ACERTOS %d / %d", acertos, (int)TOTAL); draw_text_center(buf, 300, 5, 0x00FFFFFF);
-        if(vidas<=0) draw_text_center("GAME OVER!", 380, 6, 0x00FF4D4D);
-        else if(pontos>=1300) draw_text_center("GENIO GALACTICO!", 380, 6, 0x0022C55E);
-        else if(pontos>=800) draw_text_center("ASTRONAUTA!", 380, 6, 0x0022C55E);
-        else draw_text_center("EXPLORADOR ESPACIAL!", 380, 5, 0x0022C55E);
-        draw_text_center("START = JOGAR DE NOVO", 520, 4, 0x00FFFFFF);
-        draw_text_center("SELECT = SAIR", 560, 4, 0x00FFFFFF);
     }
-    (void)ui;
 }
 
-static int ler_botao(void){
-    padInfo info; padData d;
-    ioPadGetInfo(&info);
-    if(!info.status[0]) return 0;
-    ioPadGetData(0, &d);
-    int btn = 0;
-    if(d.BTN_START) btn = 10;
-    else if(d.BTN_SELECT) btn = 11;
-    else if(d.BTN_CROSS) btn = 1;
-    else if(d.BTN_SQUARE) btn = 2;
-    else if(d.BTN_CIRCLE) btn = 3;
-    else if(d.BTN_TRIANGLE) btn = 4;
-    int pressed = (btn!=0 && btn_prev==0) ? btn : 0;
-    btn_prev = btn;
-    return pressed;
+void drawFilledRect(SDL_Surface *dst, int x, int y, int w, int h, Uint32 color) {
+    SDL_Rect r = {x, y, w, h};
+    SDL_FillRect(dst, &r, color);
 }
 
-int main(int argc, char **argv){
-    (void)argc; (void)argv;
-    init_screen();
+void drawRoundedRect(SDL_Surface *dst, int x, int y, int w, int h, int radius, Uint32 color) {
+    drawFilledRect(dst, x + radius, y, w - 2*radius, h, color);
+    drawFilledRect(dst, x, y + radius, w, h - 2*radius, color);
+    drawFilledCircle(dst, x + radius, y + radius, radius, color);
+    drawFilledCircle(dst, x + w - radius, y + radius, radius, color);
+    drawFilledCircle(dst, x + radius, y + h - radius, radius, color);
+    drawFilledCircle(dst, x + w - radius, y + h - radius, radius, color);
+}
+
+void drawText(SDL_Surface *dst, TTF_Font *f, int x, int y, const char *text, Uint8 r, Uint8 g, Uint8 b) {
+    if (!f) return;
+    SDL_Color col = {r, g, b, 255};
+    SDL_Surface *t = TTF_RenderText_Blended(f, text, col);
+    if (!t) return;
+    SDL_Rect d = {x, y, 0, 0};
+    SDL_BlitSurface(t, NULL, dst, &d);
+    SDL_FreeSurface(t);
+}
+
+void drawTextCenter(SDL_Surface *dst, TTF_Font *f, int cx, int y, const char *text, Uint8 r, Uint8 g, Uint8 b) {
+    if (!f) return;
+    SDL_Color col = {r, g, b, 255};
+    SDL_Surface *t = TTF_RenderText_Blended(f, text, col);
+    if (!t) return;
+    SDL_Rect d = {cx - t->w/2, y, 0, 0};
+    SDL_BlitSurface(t, NULL, dst, &d);
+    SDL_FreeSurface(t);
+}
+
+// Barra de status
+void drawBar(int x, int y, int w, int h, int valor, const char *label, Uint8 r, Uint8 g, Uint8 b) {
+    char buf[16];
+    // fundo
+    drawRoundedRect(screen, x, y, w, h, 8, RGB(40,40,40));
+    // preenchimento
+    int fillW = (w - 4) * valor / 100;
+    if (fillW < 0) fillW = 0;
+    if (fillW > w-4) fillW = w-4;
+    if (valor > 50) drawRoundedRect(screen, x+2, y+2, fillW, h-4, 6, RGB(r,g,b));
+    else if (valor > 25) drawRoundedRect(screen, x+2, y+2, fillW, h-4, 6, RGB(255,165,0));
+    else drawRoundedRect(screen, x+2, y+2, fillW, h-4, 6, RGB(255,50,50));
+    drawText(screen, fontSmall, x, y - 18, label, 255,255,255);
+    snprintf(buf, sizeof(buf), "%d%%", valor);
+    drawText(screen, fontSmall, x + w + 8, y + 2, buf, 255,255,255);
+}
+
+void drawHUD() {
+    // Topo escuro
+    drawFilledRect(screen, 0, 0, SCREEN_W, 80, RGB(30,30,45));
+    drawBar(20, 35, 180, 18, pou.fome, "Fome", 255, 100, 100);
+    drawBar(280, 35, 180, 18, pou.saude, "Saude", 100, 255, 100);
+    drawBar(540, 35, 180, 18, pou.energia, "Energia", 100, 180, 255);
+    drawBar(800, 35, 180, 18, pou.diversao, "Diversao", 255, 220, 80);
+
+    // Moedas
+    drawFilledCircle(screen, 1085, 44, 16, RGB(255,215,0));
+    drawFilledCircle(screen, 1085, 44, 11, RGB(230,180,0));
+    char coinBuf[32];
+    snprintf(coinBuf, sizeof(coinBuf), "%d", pou.moedas);
+    drawText(screen, font, 1110, 28, coinBuf, 255,255,255);
+
+    // Nome sala
+    const char *salas[4] = {"COZINHA", "BANHEIRO", "QUARTO", "JOGOS"};
+    drawTextCenter(screen, fontSmall, 640, 68, salas[pou.sala], 200,200,200);
+    drawText(screen, fontSmall, 20, 690, "L1 <- Sala | R1 Sala -> | X Interagir | START Sair", 180,180,180);
+}
+
+// Desenha o Pou com matematica
+void drawPou(int cx, int cy, int pupilDX, int pupilDY) {
+    int w = 340;
+    int h = 420;
+    int x = cx - w/2;
+    int y = cy - h/2;
+
+    // Sombra
+    drawFilledCircle(screen, cx, cy + h/2 + 12, 150, RGB(0,0,0));
+
+    // Corpo - formato de batata usando elipses sobrepostas
+    // Corpo principal
+    for (int yy = 0; yy < h; yy++) {
+        for (int xx = 0; xx < w; xx++) {
+            double nx = (xx - w/2.0) / (w/2.0);
+            double ny = (yy - h/2.0) / (h/2.0);
+            // Equacao elipse com deformacao embaixo mais larga
+            double deform = 1.0 + 0.12 * ny; // base mais larga
+            double v = (nx*nx)/(deform*deform) + ny*ny;
+            if (v <= 1.0) {
+                int px = x + xx;
+                int py = y + yy;
+                if (px >=0 && px < SCREEN_W && py >=0 && py < SCREEN_H) {
+                    Uint32 *pixels = (Uint32*)screen->pixels;
+                    // Sombreamento: mais escuro nas bordas
+                    double shade = 1.0 - 0.18 * v;
+                    int r = (int)(194 * shade);
+                    int g = (int)(143 * shade);
+                    int b = (int)(92 * shade);
+                    // Barriga mais clara
+                    double dx = (xx - w/2.0)/ (w/2.0);
+                    double dy = (yy - h*0.62)/ (h*0.30);
+                    if (dx*dx + dy*dy < 0.9) {
+                        r = 222; g = 178; b = 122;
+                    }
+                    pixels[py * screen->w + px] = RGB(r,g,b);
+                }
+            }
+        }
+    }
+
+    // Olhos grandes
+    int eyeY = cy - 70;
+    int eyeLX = cx - 75;
+    int eyeRX = cx + 75;
+    int eyeR = 58;
+
+    // Branco dos olhos
+    drawFilledCircle(screen, eyeLX, eyeY, eyeR, RGB(255,255,255));
+    drawFilledCircle(screen, eyeRX, eyeY, eyeR, RGB(255,255,255));
+    // Contorno fino
+    for (int a=0; a<360; a++) {
+        double rad = a * M_PI / 180.0;
+        int px = eyeLX + cos(rad)*(eyeR);
+        int py = eyeY + sin(rad)*(eyeR);
+        if (px>=0 && px<SCREEN_W && py>=0 && py<SCREEN_H) {
+            Uint32 *pix = (Uint32*)screen->pixels;
+            pix[py*screen->w+px] = RGB(120,90,50);
+        }
+        px = eyeRX + cos(rad)*(eyeR);
+        py = eyeY + sin(rad)*(eyeR);
+        if (px>=0 && px<SCREEN_W && py>=0 && py<SCREEN_H) {
+            Uint32 *pix = (Uint32*)screen->pixels;
+            pix[py*screen->w+px] = RGB(120,90,50);
+        }
+    }
+
+    // Piscar
+    if (pou.piscar > 0) {
+        drawFilledRect(screen, eyeLX-eyeR, eyeY-10, eyeR*2, 20, RGB(194,143,92));
+        drawFilledRect(screen, eyeRX-eyeR, eyeY-10, eyeR*2, 20, RGB(194,143,92));
+    } else {
+        // Pupilas que seguem analogico
+        int pxL = eyeLX + pupilDX;
+        int pyL = eyeY + pupilDY;
+        int pxR = eyeRX + pupilDX;
+        int pyR = eyeY + pupilDY;
+        drawFilledCircle(screen, pxL, pyL, 26, RGB(30,30,30));
+        drawFilledCircle(screen, pxR, pyR, 26, RGB(30,30,30));
+        drawFilledCircle(screen, pxL+8, pyL-8, 8, RGB(255,255,255));
+        drawFilledCircle(screen, pxR+8, pyR-8, 8, RGB(255,255,255));
+    }
+
+    // Boca - muda com fome / felicidade
+    int mouthY = cy + 30;
+    int mouthX = cx;
+    if (pou.fome < 30) {
+        // Boca triste / com fome: arco para baixo
+        for (int a=180; a<=360; a++) {
+            double rad = a * M_PI / 180.0;
+            int px = mouthX + cos(rad)*42;
+            int py = mouthY + 18 + sin(rad)*22;
+            drawFilledCircle(screen, px, py, 5, RGB(80,40,20));
+        }
+        // Lingua para fora
+        drawFilledCircle(screen, mouthX, mouthY+32, 12, RGB(255,120,120));
+    } else if (pou.diversao > 70 && pou.fome > 50) {
+        // Sorriso grande feliz
+        for (int a=0; a<=180; a++) {
+            double rad = a * M_PI / 180.0;
+            int px = mouthX + cos(rad)*48;
+            int py = mouthY + sin(rad)*32;
+            drawFilledCircle(screen, px, py, 6, RGB(80,40,20));
+        }
+        drawFilledCircle(screen, mouthX, mouthY+22, 18, RGB(150,60,60));
+    } else if (pou.fome < 60) {
+        // Boca neutra / meio preocupado - linha reta
+        drawFilledRect(screen, mouthX-35, mouthY, 70, 7, RGB(80,40,20));
+    } else {
+        // Sorriso normal
+        for (int a=20; a<=160; a++) {
+            double rad = a * M_PI / 180.0;
+            int px = mouthX + cos(rad)*40;
+            int py = mouthY + sin(rad)*24;
+            drawFilledCircle(screen, px, py, 5, RGB(80,40,20));
+        }
+    }
+
+    // Bochechas
+    drawFilledCircle(screen, cx-115, cy+35, 18, RGB(255,150,130));
+    drawFilledCircle(screen, cx+115, cy+35, 18, RGB(255,150,130));
+
+    // Pes
+    drawFilledCircle(screen, cx-70, cy+h/2-8, 32, RGB(160,110,60));
+    drawFilledCircle(screen, cx+70, cy+h/2-8, 32, RGB(160,110,60));
+}
+
+void drawRoomBackground() {
+    Uint32 col = RGB(180,220,255);
+    if (pou.sala == 0) col = RGB(255,230,180); // Cozinha - quente
+    if (pou.sala == 1) col = RGB(180,220,255); // Banheiro - azul
+    if (pou.sala == 2) col = RGB(200,180,255); // Quarto - roxo
+    if (pou.sala == 3) col = RGB(120,200,120); // Jogos - verde
+    drawFilledRect(screen, 0, 80, SCREEN_W, SCREEN_H-80, col);
+
+    // Chao
+    drawFilledRect(screen, 0, 580, SCREEN_W, 140, RGB(150,110,70));
+
+    // Decoracao por sala
+    if (pou.sala == 0) {
+        // Geladeira
+        drawRoundedRect(screen, 60, 200, 160, 300, 12, RGB(220,220,230));
+        drawText(screen, fontSmall, 80, 320, "GELADEIRA", 60,60,60);
+        // Mesa
+        drawFilledRect(screen, 950, 450, 250, 20, RGB(120,80,40));
+        drawFilledRect(screen, 970, 470, 20, 110, RGB(120,80,40));
+        drawFilledRect(screen, 1150, 470, 20, 110, RGB(120,80,40));
+        drawText(screen, fontSmall, 1000, 410, "X = Comer", 50,50,50);
+    }
+    if (pou.sala == 1) {
+        // Banheira
+        drawRoundedRect(screen, 80, 400, 350, 150, 30, RGB(255,255,255));
+        drawFilledRect(screen, 90, 410, 330, 60, RGB(120,200,255));
+        drawText(screen, fontSmall, 180, 350, "X = Tomar Banho", 50,50,80);
+        // Espelho
+        drawRoundedRect(screen, 1000, 150, 150, 180, 20, RGB(200,230,255));
+    }
+    if (pou.sala == 2) {
+        // Cama
+        drawRoundedRect(screen, 950, 430, 260, 130, 15, RGB(255,180,180));
+        drawText(screen, fontSmall, 1000, 380, "X = Dormir", 50,50,50);
+        // Lampada
+        drawFilledCircle(screen, 150, 180, 40, RGB(255,255,150));
+    }
+    if (pou.sala == 3) {
+        drawTextCenter(screen, font, 640, 110, "MINIGAME: PEGUE A COMIDA!", 40,60,40);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Pontos: %d  |  Use Analogico para mover a cesta", scoreGame);
+        drawTextCenter(screen, fontSmall, 640, 145, buf, 40,60,40);
+    }
+}
+
+// Minigame
+void initFoods() {
+    for (int i=0;i<MAX_FOOD;i++) {
+        foods[i].ativo = 0;
+        foods[i].x = 100 + rand() % 1000;
+        foods[i].y = -50 - rand()%400;
+        foods[i].speed = 3 + rand()%4;
+        foods[i].tipo = rand()%4;
+    }
+    // Ativa 3 iniciais
+    for (int i=0;i<3;i++) foods[i].ativo = 1;
+}
+
+void updateMinigame(int anaX) {
+    // Move cesta
+    cestaX += anaX / 8;
+    if (cestaX < 60) cestaX = 60;
+    if (cestaX > 1220) cestaX = 1220;
+
+    for (int i=0;i<MAX_FOOD;i++) {
+        if (!foods[i].ativo) {
+            if (rand()%100 < 2) {
+                foods[i].ativo = 1;
+                foods[i].x = 80 + rand()%1120;
+                foods[i].y = -30;
+                foods[i].speed = 3 + rand()%5;
+                foods[i].tipo = rand()%4;
+            }
+            continue;
+        }
+        foods[i].y += foods[i].speed;
+        // Colisao com cesta (y 620, largura 120)
+        if (foods[i].y > 590 && foods[i].y < 640 && abs(foods[i].x - cestaX) < 70) {
+            foods[i].ativo = 0;
+            foods[i].y = -50;
+            scoreGame += 10;
+            pou.moedas += 5;
+            pou.diversao += 3;
+            if (pou.diversao > 100) pou.diversao = 100;
+            pou.fome += 2;
+            if (pou.fome > 100) pou.fome = 100;
+        }
+        if (foods[i].y > 720) {
+            foods[i].ativo = 0;
+            foods[i].y = -50;
+        }
+    }
+    gameTimer++;
+}
+
+void drawMinigame() {
+    // Cesta
+    drawRoundedRect(screen, cestaX-60, 620, 120, 40, 10, RGB(180,120,40));
+    drawFilledRect(screen, cestaX-60, 620, 120, 12, RGB(120,80,20));
+    // Comidas caindo
+    for (int i=0;i<MAX_FOOD;i++) {
+        if (!foods[i].ativo) continue;
+        int x = foods[i].x;
+        int y = foods[i].y;
+        if (foods[i].tipo == 0) { // maca vermelha
+            drawFilledCircle(screen, x, y, 20, RGB(255,40,40));
+            drawFilledRect(screen, x-2, y-28, 4, 10, RGB(80,50,20));
+            drawFilledCircle(screen, x+8, y-24, 7, RGB(80,180,80));
+        } else if (foods[i].tipo == 1) { // bolo
+            drawFilledRect(screen, x-20, y, 40, 22, RGB(255,180,220));
+            drawFilledRect(screen, x-15, y-12, 30, 12, RGB(255,220,240));
+            drawFilledCircle(screen, x, y-18, 5, RGB(255,0,0));
+        } else if (foods[i].tipo == 2) { // pizza
+            drawFilledCircle(screen, x, y, 20, RGB(255,220,100));
+            drawFilledCircle(screen, x-6, y-4, 5, RGB(255,0,0));
+            drawFilledCircle(screen, x+6, y+4, 5, RGB(0,180,0));
+        } else { // cenoura
+            drawFilledRect(screen, x-6, y, 12, 28, RGB(255,140,0));
+            drawFilledRect(screen, x-8, y-12, 16, 10, RGB(0,200,0));
+        }
+    }
+}
+
+int main(int argc, char *argv[]) {
+    srand(time(NULL));
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK) < 0) {
+        printf("SDL_Init: %s\n", SDL_GetError());
+        return 1;
+    }
+    if (TTF_Init() < 0) {
+        printf("TTF_Init: %s\n", TTF_GetError());
+    }
+    screen = SDL_SetVideoMode(SCREEN_W, SCREEN_H, 32, SDL_HWSURFACE | SDL_DOUBLEBUF);
+    if (!screen) return 1;
+    SDL_WM_SetCaption("Pou PS3", NULL);
+
+    // Fonte - tenta carregar do data, se falhar usa padrao
+    font = TTF_OpenFont("data/font.ttf", 24);
+    fontSmall = TTF_OpenFont("data/font.ttf", 18);
+    fontBig = TTF_OpenFont("data/font.ttf", 36);
+    if (!font) font = TTF_OpenFont("/dev_hdd0/game/POUPS3001/USRDIR/data/font.ttf", 24);
+    if (!fontSmall) fontSmall = font;
+    if (!fontBig) fontBig = font;
+
     ioPadInit(7);
-    sysUtilRegisterCallback(0, sysutil_cb, NULL);
-    srand(20261109);
-    while(running){
-        sysUtilCheckCallback();
-        int b = ler_botao();
-        if(estado==0){
-            if(b==10){ estado=1; idx=0; pontos=0; vidas=3; acertos=0; }
-            if(b==11) running=0;
-        } else if(estado==1){
-            if(b>=1 && b<=4){
-                escolha = b-1;
-                Pergunta *p = &perguntas[idx];
-                if(escolha==p->correta){ pontos+=100; acertos++; }
-                else vidas--;
-                estado=2; timer_resposta=0;
-            }
-            if(b==11) running=0;
-        } else if(estado==2){
-            timer_resposta++;
-            if(timer_resposta>120){
-                if(vidas<=0) estado=3;
-                else { idx++; if(idx>=(int)TOTAL) estado=3; else estado=1; }
-            }
-        } else if(estado==3){
-            if(b==10){ estado=1; idx=0; pontos=0; vidas=3; acertos=0; }
-            if(b==11) running=0;
+    IMG_Init(IMG_INIT_PNG);
+
+    // Estado inicial
+    pou.fome = 80;
+    pou.saude = 90;
+    pou.energia = 85;
+    pou.diversao = 70;
+    pou.moedas = 120;
+    pou.sala = 0;
+    pou.piscar = 0;
+    pou.piscarTimer = 0;
+    pou.frame = 0;
+    initFoods();
+
+    int running = 1;
+    int prevL1 = 0, prevR1 = 0, prevX = 0;
+    int tickCounter = 0;
+    SDL_Event ev;
+
+    while (running) {
+        Uint32 frameStart = SDL_GetTicks();
+
+        while (SDL_PollEvent(&ev)) {
+            if (ev.type == SDL_QUIT) running = 0;
+            if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_ESCAPE) running = 0;
         }
-        render();
-        present();
-        usleep(16000);
-    }
-    return 0;
-}
+
+        ioPadGetInfo(&padinfo);
+        int anaX = 0, anaY = 0;
+        int btnL1 = 0, btnR1 = 0, btnX = 0, btnStart = 0;
+
+        if (padinfo.status[0]) {
+            ioPadGetData(0, &paddata);
+            if (paddata.button[PAD_CTRL_START]) btnStart = 1;
+            if (paddata.button[PAD_CTRL_L1]) btnL1 = 1;
+            if (paddata.button[PAD_CTRL_R1]) btnR1 = 1;
+            if (paddata.button[PAD_CTRL_CROSS]) btnX = 1;
+            anaX = paddata.button[6] - 128; // ANA_L_X
+            anaY = paddata.button[7] - 128; // ANA_L_Y
+        }
+        if (btnStart) running = 0;
+
+        // Troca de sala com L1/R1 (borda de subida)
+        if (btnL1 && !prevL1) {
+            pou.sala--;
+            if (pou.sala < 0) pou.sala = 3;
+            if (pou.sala == 3) initFoods();
+        }
+        if (btnR1 && !prevR1) {
+            pou.sala++;
+            if (pou.sala > 3) pou.sala = 0;
+            if (pou.sala == 3) initFoods();
+        }
+        prevL1 = btnL1; prevR1 = btnR1;
+
+        // Acao X
+        if (btnX && !prevX) {
+            if (pou.sala == 0) { // Cozinha - alimentar
+                if (pou.moedas >= 5) {
+                    pou.moedas -= 5;
+                    pou.fome += 18;
+                    if (pou.fome > 100) pou.fome = 100;
+                    pou.saude += 2;
+                    if (pou.saude > 100) pou.saude = 100;
+                } else {
+                    pou.fome += 8;
+                    if (pou.fome > 100) pou.fome = 100;
+                }
+            } else if (pou.sala == 1) { // Banheiro
+                pou.saude += 15;
+                if (pou.saude > 100) pou.saude = 100;
+                pou.energia += 2;
+            } else if (pou.sala == 2) { // Quarto - dormir
+                pou.energia += 20;
+                if (pou.energia > 100) pou.energia = 100;
+                pou.saude += 3;
+            } else if (pou.sala == 3) { // Jogos
+                pou.diversao += 5;
+                if (pou.diversao > 100) pou.diversao = 100;
+            }
+        }
+        prevX = btnX;
+
+        // Minigame atualiza sempre na sala Jogos
+        if (pou.sala == 3) {
+            updateMinigame(anaX);
+        }
+
+        // Decaimento ao longo do tempo - a cada ~60 frames (1 seg)
+        tickCounter++;
+        if (tickCounter >= 60) {
+            tickCounter = 0;
+            pou.fome -= 1;
+            pou.diversao -= 1;
+            pou.energia -= 1;
+            if (pou.fome < 20) pou.saude -= 1;
+            if (pou.fome < 0) pou.fome = 0;
+            if (pou.diversao < 0) pou.diversao = 0;
+            if (pou.energia < 0) pou.energia = 0;
+            if (pou.saude < 0) pou.saude = 0;
+            if (pou.saude > 100) pou.saude = 100;
+            // Ganha moeda passiva a cada 10 seg se feliz
+            if (pou.diversao > 60 && pou.fome > 60) pou.moedas += 1;
+        }
+
+        // Piscar
+        pou.piscarTimer++;
+        if (pou.piscarTimer > 180) {
+            pou.piscar = 8;
+            pou.piscarTimer = 0;
+        }
+        if (pou.piscar > 0) pou.piscar--;
+
+        // Pupilas seguem analogico - limita a +/-14
+        int pupilDX = anaX / 10;
+        int pupilDY = anaY / 10;
+        if (pupilDX > 14) pupilDX = 14;
+        if (pupilDX < -14) pupilDX = -14;
+        if (pupilDY > 10) pupilDY = 10;
+        if (pupilDY < -10) pupilDY = -10;
+
+        // Animacao leve de respiro
+        pou.frame++;
+        int bob = (int)(sin(pou.frame * 0.05) * 4);
+
+        // RENDER
+        drawRoomBackground();
+        drawHUD();
+
+        // Pou centralizado, ou escondido no minigame para dar espaco
+        if (pou.sala == 3) {
+            // Pou pequeno no canto assistindo
+            drawPou(200, 480 + bob, pupilDX, pupilDY);
+            drawMinigame();
+            drawText(screen, fontSmall, 850, 650, "Pegue para ganhar moedas!", 255,255,255);
+        } else {
+            drawPou(640, 420 + bob, pupilDX, pupilDY);
+            // Texto de ajuda por sala
+            if (pou.sala == 0) drawTextCenter(screen, fontSmall, 640, 640, "Aperte X para alimentar o Pou - Custa 5 moedas", 60,40,20);
+            if (pou.sala == 1) drawTextCenter(screen, fontSmall, 640, 640, "Aperte X para dar banho e recuperar Saude", 40,40,80);
+            if (pou.sala == 2) drawTextCenter(screen, fontSmall, 640, 640, "Aperte X para dormir e recuperar Energia", 60,40,80);
+      
