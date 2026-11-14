@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<sfo>
-  <value name="APP_VER" type="string">01.00</value>
-  <value name="ATTRIBUTE" type="integer">0</value>
-  <value name="BOOTABLE" type="integer">1</value>
-  <value name="CATEGORY" type="string">HG</value>
-  <value name="LICENSE" type="string">Homebrew</value>
-  <value name="PARENTAL_LEVEL" type="integer">1</value>
-  <value name="PS3_SYSTEM_VER" type="string">00.0000</value>
-  <value name="RESOLUTION" type="integer">63</value>
-  <value name="SOUND_FORMAT" type="integer">1</value>
-  <value name="TITLE" type="string">Astronomia Quiz PS3</value>
-  <value name="TITLE_ID" type="string">ASTR00001</value>
-  <value name="VERSION" type="string">01.00</value>
-</sfo>
+<params>
+  <param key="TITLE_ID">POUPS3001</param>
+  <param key="TITLE">Pou PS3</param>
+  <param key="APP_VER">01.00</param>
+  <param key="VERSION">01.00</param>
+  <param key="CATEGORY">HG</param>
+  <param key="PARENTAL_LEVEL">1</param>
+  <param key="RESOLUTION">1920x1080,1280x720,720x480</param>
+  <param key="SOUND_FORMAT">Dolby Digital 5.1ch, DTS 5.1ch, LPCM 2ch, LPCM 5.1ch, LPCM 7.1ch</param>
+  <param key="BOOTABLE">1</param>
+  <param key="ATTRIBUTE">0</param>
+  <param key="PS3_SYSTEM_VER">03.4000</param>
+  <param key="LICENSE">Licensed by Sony Computer Entertainment Inc. for play on the PLAYSTATION 3 Computer Entertainment System.</param>
+</params>
