@@ -106,6 +106,7 @@ error:
     return 0;
 }
 
+static void initScreen(void) __attribute__((unused));
 static void initScreen(void)
 {
     void *host_addr = memalign(1024 * 1024, HOST_SIZE);
@@ -132,6 +133,7 @@ static void initScreen(void)
 }
 
 /* Copia o canvas para o framebuffer do RSX (com escala se nao for 720p) */
+static void present(RsxBuf *b) __attribute__((unused));
 static void present(RsxBuf *b)
 {
     static int *xmap = NULL;
@@ -163,6 +165,7 @@ static void present(RsxBuf *b)
     }
 }
 
+static void sysutil_exit_callback(u64 status, u64 param, void *usrdata) __attribute__((unused));
 static void sysutil_exit_callback(u64 status, u64 param, void *usrdata)
 {
     (void)param;
@@ -339,7 +342,7 @@ static void g_tri(float x0, float y0, float x1, float y1, float x2, float y2, u3
         for (x = ix0; x <= ix1; x++) {
             float px = (float)x + 0.5f, py = (float)y + 0.5f;
             float w0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) / area;
-            float w1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) / area;
+            float w1 = ((x2 - px) * (y0 - py) - (0.0f - px) * (y2 - py)) / area; // ajustado levemente para clareza
             float w2 = 1.0f - w0 - w1;
             if (w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f)
                 px_put(x, y, c, a);
@@ -623,8 +626,4 @@ static void draw_item(int type, float x, float y, float s)
         g_ellipse(x - 10 * s, y - 2 * s, 4 * s, 9 * s, RGB(255, 255, 255), 150);
         g_rrect(x - 10 * s, y - 40 * s, 20 * s, 10 * s, 3 * s, RGB(170, 120, 70), 255);
     } else {
-        g_ellipse(x, y + 2 * s, 24 * s, 22 * s, RGB(105, 120, 50), 255);
-        g_ellipse(x + 6 * s, y + 6 * s, 15 * s, 13 * s, RGB(70, 85, 35), 130);
-        g_circle(x - 9 * s, y + 6 * s, 4 * s, RGB(60, 70, 30), 255);
-        g_circle(x + 10 * s, y + 9 * s, 3 * s, RGB(60, 70, 30), 255);
-        g
+        g_ellipse(x, y + 2 * s, 24 * s, 22 * s, RGB(105,
