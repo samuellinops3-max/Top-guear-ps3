@@ -1,38 +1,70 @@
 ifeq ($(strip $(PSL1GHT)),)
-$(error "Defina a variavel PSL1GHT")
+$(error "PSL1GHT is not set. Export it: export PSL1GHT=$$PS3DEV/psl1ght")
 endif
+
 include $(PSL1GHT)/ppu_rules
 
-.DEFAULT_GOAL := all
+TARGET		:= PouPS3
+TITLE		:= Pou PS3
+APPID		:= POUPS3001
+CONTENTID	:= UP0001-$(APPID)_00-0000000000000000
 
-TARGET    := astronomia
-TITLE     := Astronomia Quiz PS3
-APPID     := ASTR00001
-CONTENTID := UP0001-$(APPID)_00-0000000000000000
-SFOXML    := sfo.xml
-PORTLIBS  := $(PS3DEV)/portlibs/ppu
+BUILD		:= build
+SOURCES		:= .
+DATA		:= data
+SFO_XML		:= sfo.xml
+SFO_FILE	:= PARAM.SFO
 
-MACHDEP := -mhard-float -fmodulo-sched -ffunction-sections -fdata-sections
-CFLAGS  := -O2 -Wall -mcpu=cell $(MACHDEP) -I$(PSL1GHT)/ppu/include -I$(PORTLIBS)/include
-LDFLAGS := $(MACHDEP) -L$(PSL1GHT)/ppu/lib -L$(PORTLIBS)/lib
-LIBS    := -lrsx -lgcm_sys -lio -lsysutil -lrt -llv2 -lm
+INCLUDES	:= -I$(PSL1GHT)/ppu/include/SDL
 
-all: $(TARGET).pkg
+CFLAGS		:= -O2 -Wall -mcpu=cell -mhard-float -I$(PSL1GHT)/ppu/include $(INCLUDES)
+LDFLAGS		:= -L$(PSL1GHT)/ppu/lib -L$(PORTLIBS)/lib
 
-main.o: main.c
-	$(CC) $(CFLAGS) -c $< -o $@
+LIBS		:= -lSDL -lSDL_ttf -lSDL_image -lm -lfreetype -lpng -ljpeg -lz -laudio -lio -lrsx -lgcm_sys -lsysutil -lsysmodule -lnet -lnetctl
 
-$(TARGET).elf: main.o
-	$(CC) $(LDFLAGS) -o $@ $< $(LIBS)
+CFILES		:= $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
+SFILES		:= $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.S)))
 
-$(TARGET).pkg: $(TARGET).elf ICON0.PNG $(SFOXML)
-	rm -rf pkg
-	mkdir -p pkg/USRDIR
-	cp ICON0.PNG pkg/ICON0.PNG
-	$(PS3DEV)/bin/sprxlinker $(TARGET).elf
-	$(PS3DEV)/bin/make_self_npdrm $(TARGET).elf pkg/USRDIR/EBOOT.BIN $(CONTENTID)
-	$(PS3DEV)/bin/sfo.py --title "$(TITLE)" --appid "$(APPID)" -f $(SFOXML) pkg/PARAM.SFO
-	$(PS3DEV)/bin/pkg.py --contentid $(CONTENTID) pkg/ $@
+OFILES		:= $(CFILES:.c=.o) $(SFILES:.S=.o)
+OFILES		:= $(OFILES:%=$(BUILD)/%)
+
+PKGDIR		:= pkg
+PKGF		:= $(TARGET).pkg
+
+all: $(TARGET).elf $(TARGET).self EBOOT.BIN $(SFO_FILE)
+
+$(TARGET).elf: $(OFILES)
+	@$(CC) $(OFILES) $(LDFLAGS) $(LIBS) -o $@
+
+$(TARGET).self: $(TARGET).elf
+	@$(SELF) $< $@
+
+EBOOT.BIN: $(TARGET).self
+	@$(SELF) --npdrm --encrypt $< $@
+	@cp $@ $(TARGET).self.npdrm
+
+$(SFO_FILE): $(SFO_XML)
+	@$(SFO) --sfo $(SFO_XML) -f $@
+
+pkg: EBOOT.BIN $(SFO_FILE)
+	@rm -rf $(PKGDIR)
+	@mkdir -p $(PKGDIR)/USRDIR
+	@mkdir -p $(PKGDIR)/META
+	@cp EBOOT.BIN $(PKGDIR)/USRDIR/EBOOT.BIN
+	@cp $(SFO_FILE) $(PKGDIR)/PARAM.SFO
+	@if [ -d $(DATA) ]; then cp -r $(DATA) $(PKGDIR)/USRDIR/; fi
+	@echo "$(CONTENTID)" > $(PKGDIR)/META/PACKAGE_ID
+	@$(PKG) --contentid $(CONTENTID) $(PKGDIR)/ $(PKGF)
+
+$(BUILD)/%.o: %.c
+	@mkdir -p $(BUILD)
+	@$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+
+$(BUILD)/%.o: %.S
+	@mkdir -p $(BUILD)
+	@$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:
-	rm -rf pkg *.o *.elf *.self *.pkg
+	@rm -rf $(BUILD) $(TARGET).elf $(TARGET).self $(TARGET).self.npdrm EBOOT.BIN $(SFO_FILE) $(PKGF) $(PKGDIR)
+
+.PHONY: all pkg clean
